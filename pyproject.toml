@@ -36,6 +36,10 @@ dev = [
     "pytest-asyncio",
     "ruff",
 ]
+docs = [
+    "mkdocs-material",
+    "mkdocs-minify-plugin",
+]
 
 [tool.ruff]
 target-version = "py311"

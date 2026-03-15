@@ -39,3 +39,9 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# MkDocs build
+site/
+
+# Korean documentation (local only)
+docs/ko/

@@ -1,6 +1,6 @@
 # Architecture
 
-> Updated 2026-03-15 to reflect the v0.1 Two-Terminal decision.
+> Updated 2026-03-15 to reflect the v0.1 Two-Terminal architecture.
 
 ## System Overview
 
@@ -19,20 +19,21 @@ Terminal 1 (Deep)              Terminal 2 (Fresh)
                      |
                      |
               SQLite (WAL mode)
-              ~/.ploidy/debates.db
+              ~/.ploidy/ploidy.db
 ```
 
 Both terminals connect to `http://localhost:8765/mcp`. The server identifies sessions by connection order: the first client is assigned the **Deep** role, the second is assigned the **Fresh** role. This is configurable via tool arguments.
 
-## Transport
+## Transport: Streamable HTTP
 
-**Streamable HTTP** (not stdio). The stdio transport is 1:1 -- one client per server process. For multiple clients to share a single debate, the server must accept multiple concurrent connections over HTTP.
+Ploidy uses **Streamable HTTP** transport, not stdio. The stdio transport is 1:1 -- one client per server process. For multiple clients to share a single debate, the server must accept multiple concurrent connections over HTTP.
 
 ```python
 mcp = FastMCP("Ploidy", transport="streamable-http", port=8765)
 ```
 
 MCP client configuration (e.g., Claude Code `mcp.json`):
+
 ```json
 {
   "ploidy": {
@@ -77,36 +78,83 @@ The server does not inject or strip context from the client. Context isolation i
 | Module | Role |
 |--------|------|
 | `server.py` | FastMCP server entry point. Registers all debate tools (`debate/start`, `debate/join`, `debate/position`, `debate/challenge`, `debate/status`, `debate/converge`). Handles Streamable HTTP transport. |
-| `protocol.py` | Debate state machine. Defines phases (CREATED, POSITIONS, CHALLENGE, CONVERGENCE, COMPLETE), valid transitions, and validation rules. |
+| `protocol.py` | Debate state machine. Defines phases (`INDEPENDENT`, `POSITION`, `CHALLENGE`, `CONVERGENCE`, `COMPLETE`), valid transitions, and validation rules. |
 | `session.py` | Session lifecycle management. Tracks Deep/Fresh role assignment, connection state, context metadata. |
 | `convergence.py` | Convergence engine. Analyzes positions for agreement, disagreement, and synthesis. Produces structured `ConvergenceResult`. |
 | `store.py` | SQLite persistence layer (via `aiosqlite`). Stores debates, sessions, messages, and convergence results. Uses WAL mode for concurrent access. |
-| `exceptions.py` | Domain-specific exceptions (`DebateNotFound`, `InvalidPhaseTransition`, `SessionRoleConflict`, etc.). |
+| `exceptions.py` | Domain-specific exceptions (`PloidyError`, `ProtocolError`, `ConvergenceError`, `SessionError`). |
 
-## SQLite Concurrency
+## Database Schema
 
-With multiple clients writing to the same database, WAL (Write-Ahead Logging) mode is essential:
+Ploidy uses SQLite with WAL (Write-Ahead Logging) mode for concurrent access from multiple MCP clients.
+
+```sql
+-- Debate metadata
+CREATE TABLE debates (
+    id TEXT PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Session contexts and roles
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    debate_id TEXT NOT NULL REFERENCES debates(id),
+    role TEXT NOT NULL,
+    base_prompt TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Individual debate messages
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    debate_id TEXT NOT NULL REFERENCES debates(id),
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    phase TEXT NOT NULL,
+    content TEXT NOT NULL,
+    action TEXT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Convergence results
+CREATE TABLE convergence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    debate_id TEXT NOT NULL UNIQUE REFERENCES debates(id),
+    synthesis TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    points_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+### SQLite Concurrency
+
+WAL mode allows concurrent readers with a single writer. The debate protocol's turn-based structure naturally serializes writes -- sessions rarely write simultaneously.
 
 ```python
 await db.execute("PRAGMA journal_mode=WAL")
 ```
 
-WAL allows concurrent readers with a single writer. The debate protocol's turn-based structure naturally serializes writes -- sessions rarely write simultaneously.
+## Roadmap
 
-## Future Roadmap
+### v0.1: Two-Terminal (Current)
+
+The primary mode. Two MCP client sessions connect to one Ploidy server via Streamable HTTP. The Deep session carries full project context; the Fresh session starts clean. Zero additional cost for Claude Max / Gemini Pro subscribers.
 
 ### v0.2: API Fallback
 
-Add an OpenAI-compatible API fallback for automated/single-terminal use. The server generates Fresh session responses via direct API calls using the `openai` SDK with configurable `base_url`. Supports Ollama (free), OpenRouter, Anthropic, OpenAI, Google.
+Add an OpenAI-compatible API fallback for automated / single-terminal use. The server generates Fresh session responses via direct API calls using the `openai` SDK with configurable `base_url`. Supports Ollama (free, local), OpenRouter, Anthropic, OpenAI, Google.
 
-Environment variables: `PLOIDY_API_BASE`, `PLOIDY_API_KEY`, `PLOIDY_MODEL`.
+Environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `PLOIDY_API_BASE` | Base URL for the OpenAI-compatible endpoint |
+| `PLOIDY_API_KEY` | API key (or `"ollama"` for local) |
+| `PLOIDY_MODEL` | Model identifier |
 
 ### v0.3+: MCP Sampling
 
-When major MCP clients support `sampling/createMessage` with strong context isolation guarantees, add a sampling-based provider as the lowest-friction option.
-
-## References
-
-- [MCP Specification: Transports](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports)
-- [MCP Specification: Sampling](https://modelcontextprotocol.io/specification/draft/client/sampling)
-- [Session B Orchestration Design Document](./SESSION_B_ORCHESTRATION.md) -- Full analysis of all three approaches
+When major MCP clients support `sampling/createMessage` with strong context isolation guarantees, add a sampling-based provider as the lowest-friction option. The server will auto-detect client sampling capability during initialization and use it when available.
