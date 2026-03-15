@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "diploid"
+name = "ploidy"
 version = "0.1.0"
-description = "Cross-session multi-agent debate MCP server. Same model, different context, better decisions."
+description = "Cross-session multi-agent debate MCP server. Same model, different context depths, better decisions."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -23,9 +23,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "mcp",
-    "aiosqlite",
+    "mcp>=1.0,<2",
+    "aiosqlite>=0.20,<1",
 ]
+
+[project.scripts]
+ploidy = "ploidy.server:main"
 
 [project.optional-dependencies]
 dev = [

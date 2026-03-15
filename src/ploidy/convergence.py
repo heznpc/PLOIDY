@@ -1,8 +1,8 @@
-"""Convergence engine for Diploid debates.
+"""Convergence engine for Ploidy debates.
 
 Analyzes the debate transcript to determine:
-- Points of agreement (both sessions converged independently)
-- Points of productive disagreement (one session raised a valid concern)
+- Points of agreement (sessions converged independently)
+- Points of productive disagreement (a session raised a valid concern)
 - Points of irreducible disagreement (genuinely different values/priorities)
 
 The convergence result is a structured synthesis, not a simple
@@ -12,7 +12,8 @@ since context asymmetry makes disagreements interpretable.
 
 from dataclasses import dataclass
 
-from diploid.protocol import DebateProtocol
+from ploidy.exceptions import ConvergenceError  # noqa: F401
+from ploidy.protocol import DebatePhase, DebateProtocol  # noqa: F401
 
 
 @dataclass
@@ -54,7 +55,7 @@ class ConvergenceResult:
 class ConvergenceEngine:
     """Analyzes debate transcripts and produces convergence results.
 
-    Takes the full debate protocol (with all messages from both sessions)
+    Takes the full debate protocol (with all messages from all sessions)
     and produces a structured analysis of where and why the sessions
     agreed or disagreed.
     """
