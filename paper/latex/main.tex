@@ -80,11 +80,9 @@ LLM outputs are stochastic. The same model, given the same prompt, produces diff
 
 The result: identical models, identical prompts, identical users---but different project outcomes depending on which stochastic sample landed first. Jacob et al.~\citep{jacob2025chatchamber} term this the ``Chat-Chamber Effect''---the tendency for users to trust and build upon whatever stochastic output a single session produces. This is not addressable by temperature tuning or prompt engineering; empirical evidence shows prompt-based mitigations (chain-of-thought, reflection, ``ignore your prior response'') have no statistically significant effect on anchoring bias~\citep{feng2026anchoring}.
 
-This phenomenon has a well-documented human analog. Kuhn~\citep{kuhn1962structure} observed that scientific paradigm shifts occur not because existing practitioners change their minds, but because a new generation---unburdened by accumulated commitments---evaluates the evidence independently. Planck stated this more bluntly: ``science advances one funeral at a time,'' a claim empirically confirmed by Azoulay et al.~\citep{azoulay2019funeral}, who showed that the death of eminent scientists leads to a statistically significant influx of new researchers and ideas into their fields. In both cases, accumulated context (experience, expertise, institutional memory) simultaneously enables domain mastery and prevents paradigm revision.
+This phenomenon has a well-documented human analog: accumulated expertise simultaneously enables domain mastery and prevents paradigm revision---a dynamic observed across scientific communities~\citep{kuhn1962structure}, empirically confirmed in studies of eminent scientists' influence on field renewal~\citep{azoulay2019funeral}, and formalized as a structural property of generational turnover. We explore this parallel in depth in a companion paper; here, we note only that the LLM single-session problem is structurally similar---context accumulation creates anchoring that prompt-based interventions cannot overcome~\citep{feng2026anchoring}.
 
-The parallel extends beyond scientists. If we map \textbf{context to lifespan}---treating accumulated knowledge as a growing context window and cognitive capacity as a fixed model---then a structural analogy (though not a mechanistic isomorphism) emerges with human civilization more broadly. Every individual is an instance of the same model (\emph{homo sapiens}) with roughly equivalent architecture (intelligence), differing only in session (environment, era, culture). Each person begins with a fresh context, stochastically accumulates a unique trajectory of beliefs and expertise, and becomes progressively anchored to that trajectory. Innovation and paradigm shifts occur not because individuals overcome their accumulated priors---Kuhn and Azoulay's evidence suggests they largely do not---but because new individuals (fresh contexts) evaluate the same evidence without the anchoring of prior commitment. Human civilization's capacity for renewal depends structurally on this generational context asymmetry: the continuous introduction of sessions that do not inherit the entrenched context of their predecessors.
-
-This framing makes the LLM single-session problem precise: a user who works within one session is a civilization of one, with no generational turnover---no fresh context to challenge the stochastic prior that anchored the session's first response. The consequences are stark: given the same model and the same prompt, different sessions may produce fundamentally different assessments---agree, disagree, or equivocate---on the same hypothesis. A user confined to a single session is unknowingly subject to a stochastic lottery whose outcome determines not just the quality of individual responses, but whether entire tasks succeed or fail. Two users with identical models and identical problems may experience dramatically different ``model performance'' based solely on which stochastic sample anchored their session.
+The practical consequence is stark: given the same model and the same prompt, different sessions may produce fundamentally different assessments---agree, disagree, or equivocate---on the same hypothesis. A user confined to a single session is unknowingly subject to a stochastic lottery whose outcome determines not just the quality of individual responses, but whether entire tasks succeed or fail. Two users with identical models and identical problems may experience dramatically different ``model performance'' based solely on which stochastic sample anchored their session.
 
 The only computational intervention with empirical support for this problem is physical session separation. Cross-Context Review (CCR)~\citep{song2026ccr} demonstrated that a fresh session reviewing an artifact produced by a deep session achieves F1=28.6\% on error detection versus 24.6\% for same-session review ($p=0.008$). However, CCR is unidirectional---the fresh session reviews but does not debate.
 
@@ -127,7 +125,7 @@ Large-scale agent simulations (e.g., AgentSociety~\citep{pang2025agentsociety} w
 \subsection{Model Collapse and Context Contamination}
 \label{sec:collapse}
 
-When AI-generated content enters training data, progressive quality degradation occurs across model generations---termed ``model collapse''~\citep{shumailov2024collapse}. This represents the failure mode when context asymmetry disappears entirely: each new model generation inherits and amplifies the biases of the previous generation, with no ``fresh perspective'' to challenge accumulated priors. Ploidy's design principle---deliberately maintaining sessions with different context depths---can be understood as a countermeasure to this homogenization tendency.
+When AI-generated content enters training data, progressive quality degradation occurs---``model collapse''~\citep{shumailov2024collapse}. Ploidy's design of maintaining sessions with different context depths is a within-deployment countermeasure to this homogenization tendency.
 
 \subsection{Ploidy's Position}
 \label{sec:position}
@@ -154,7 +152,7 @@ AgentSociety~\citep{pang2025agentsociety} & Population simulation & Homogeneous 
 \subsection{Distinction from Multi-Agent Task Division}
 \label{sec:distinction}
 
-Claude Agent Teams and similar systems (CrewAI, MetaGPT) implement cooperative division---splitting work across agents for throughput. Adding more agents increases throughput (more hands) but does not address anchoring bias, because all agents share the same context and thus the same stochastic priors. Under Choi et al.'s martingale result~\citep{choi2025debate}, scaling homogeneous agents is mathematically equivalent to majority voting over identically biased samples. Ploidy implements the orthogonal strategy: cooperative verification, where the same problem is analyzed from intentionally different information states. The goal is not more output but different perspectives---disagreements are the primary signal, not a failure mode. This parallels a well-documented organizational phenomenon: established teams with deep domain expertise and accumulated commitments (analogous to Deep sessions) are often disrupted not by larger or more experienced competitors, but by outsiders who lack the context that makes the status quo appear rational~\citep{kuhn1962structure, azoulay2019funeral}.
+Claude Agent Teams and similar systems (CrewAI, MetaGPT) implement cooperative division---splitting work across agents for throughput. Adding more agents increases throughput (more hands) but does not address anchoring bias, because all agents share the same context and thus the same stochastic priors. Under Choi et al.'s martingale result~\citep{choi2025debate}, scaling homogeneous agents is mathematically equivalent to majority voting over identically biased samples. Ploidy implements the orthogonal strategy: cooperative verification, where the same problem is analyzed from intentionally different information states. The goal is not more output but different perspectives---disagreements are the primary signal, not a failure mode.
 
 % ============================================================
 \section{The Ploidy Protocol}
@@ -635,32 +633,9 @@ This pilot study has significant limitations that bound the strength of all clai
 \subsection{Broader Implications}
 \label{sec:implications}
 
-The stochastic prior lock-in problem is not unique to LLMs. It mirrors the well-documented phenomenon in human organizations and scientific communities where accumulated context---expertise, institutional memory, prior commitments---simultaneously enables domain mastery and prevents paradigm revision~\citep{kuhn1962structure, azoulay2019funeral}. The only reliable corrective, both historically and in our preliminary observations, is the introduction of a perspective that is not entrenched in the accumulated context.
+The stochastic prior lock-in problem is not unique to LLMs---it mirrors well-documented phenomena in human organizations where accumulated context simultaneously enables domain mastery and prevents paradigm revision~\citep{kuhn1962structure, azoulay2019funeral}. A companion paper formalizes this structural isomorphism between LLM context windows and human generational dynamics, including the connection to model collapse~\citep{shumailov2024collapse} as the failure mode when generational context asymmetry is absent.
 
-The parallel between human generational turnover and AI session management is instructive:
-
-\begin{table}[t]
-\centering
-\caption{Parallel between human generational turnover and AI model/session succession.}
-\label{tab:parallel}
-\small
-\begin{tabular}{@{}p{3cm}p{5.2cm}p{5.5cm}@{}}
-\toprule
-& \textbf{Human generational turnover} & \textbf{AI model/session succession} \\
-\midrule
-New generation's context & Fresh---different environment, different experiences & Inherited---trained on prior generation's outputs \\[4pt]
-Inherited bias & Partial---some cultural transmission, much lost & Total---training data preserves and amplifies biases \\[4pt]
-Role of ``funeral'' (Planck) & Naturally extinguishes entrenched perspectives & Absent---prior outputs persist indefinitely in training corpora \\[4pt]
-Outcome & Paradigm shifts enabled by context asymmetry between generations~\citep{kuhn1962structure, azoulay2019funeral} & Model collapse---progressive homogenization across generations~\citep{shumailov2024collapse} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Planck's principle works in human civilization precisely because new generations do not fully inherit the context of their predecessors. In AI, training on prior model outputs creates the opposite dynamic: each generation inherits its predecessor's biases verbatim, and the ``funeral'' that would naturally erode entrenched perspectives never occurs. Model collapse~\citep{shumailov2024collapse} is, in this framing, the consequence of a civilization without generational context asymmetry.
-
-This has implications for large-scale agent systems. Scaling agent count in simulations where all agents share the same priors produces verification breadth without verification depth: more samples from the same biased distribution. Boca et al.~\citep{boca2025emergent} showed that LLM populations spontaneously develop collective biases through interaction, even without individual-level bias---a within-generation analog of the cross-generation homogenization that drives model collapse.
-
-Ploidy suggests a design principle for multi-agent systems: \textbf{context diversity is more valuable than agent count}. A small number of sessions with deliberately different context depths may produce better decisions than a large homogeneous population---provided the context differences are structured through a protocol that surfaces and reconciles disagreements rather than averaging them away.
+For multi-agent system design, our preliminary results suggest a practical principle: \textbf{context diversity may be more valuable than agent count}. Combined with Choi et al.'s martingale result~\citep{choi2025debate} (scaling homogeneous agents cannot improve expected correctness) and Boca et al.'s finding~\citep{boca2025emergent} that LLM populations spontaneously develop collective biases, this motivates architectures that deliberately maintain sessions with different context depths rather than scaling identical agents.
 
 % ============================================================
 \section{Conclusion and Future Work}
