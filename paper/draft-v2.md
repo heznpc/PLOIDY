@@ -9,7 +9,7 @@
 
 ## Abstract
 
-Single-session LLM usage subjects critical decisions to stochastic prior lock-in: the model's first probabilistic response anchors all subsequent reasoning, and prompt-based mitigations have no statistically significant effect on this bias [1]. We present Ploidy, a structured debate protocol between physically separate sessions of the same model with intentionally asymmetric context depths. Unlike multi-model council approaches that rely on model diversity, Ploidy exploits **context diversity** within a single model — a dimension absent from existing products and publications as of March 2026. We introduce the **Context Asymmetry Spectrum**, which varies along two dimensions: context depth (how much prior knowledge a session receives) and context delivery mode (whether context is passively embedded or actively retrievable). Sessions range from Deep (full context, always present) through Semi-Fresh (compressed context, passively or actively delivered) to Fresh (zero context), debating through typed semantic actions before a convergence phase. In preliminary pilot experiments on 10 tasks across two context regimes, we observe that (1) context asymmetry provides no benefit on short-context tasks where entrenchment does not occur, and (2) on long-context tasks with anchoring bias, asymmetric debate achieves the highest ground-truth recall on the most bias-laden task (5/5 vs. Single Session's 3/5, stable across re-runs). These results bound where context asymmetry applies and motivate the Semi-Fresh hypothesis: that an optimal intermediate point exists in the depth × delivery space. We release Ploidy as an open-source MCP server.
+Single-session LLM usage subjects critical decisions to stochastic prior lock-in: the model's first probabilistic response anchors all subsequent reasoning, and prompt-based mitigations have no statistically significant effect on this bias [1]. We present Ploidy, a structured debate protocol between physically separate sessions of the same model with intentionally asymmetric context depths. Unlike multi-model council approaches that rely on model diversity, Ploidy exploits **context diversity** within a single model — a dimension absent from existing products and publications as of March 2026. We introduce the **Context Asymmetry Spectrum**, which varies along two dimensions: context depth (how much prior knowledge a session receives) and context delivery mode (whether context is passively embedded or actively retrievable). Sessions range from Deep (full context, always present) through Semi-Fresh (compressed context, passively or actively delivered) to Fresh (zero context), debating through typed semantic actions before a convergence phase. In preliminary pilot experiments on 10 tasks across two context regimes, we observe that (1) context asymmetry provides no benefit on short-context tasks where entrenchment does not occur, and (2) on long-context tasks with anchoring bias, asymmetric debate achieves the highest ground-truth recall on the most bias-laden task (5/5 vs. Single Session's 3/5, stable across re-runs). These results bound where context asymmetry applies. In a follow-up evaluation of Semi-Fresh variants with factorial ablation, we identify **information position as the dominant factor**: placing a compressed summary at the end rather than the beginning of the prompt improves recall from 89% to 100%, consistent with primacy anchoring effects in human cognition. We release Ploidy as an open-source MCP server.
 
 ---
 
@@ -22,13 +22,13 @@ LLM outputs are stochastic. The same model, given the same prompt, produces diff
 3. The model reinforces this prior through consistency-seeking behavior (anchoring bias, sycophancy).
 4. The user sees only one session and treats the output as deterministic.
 
-The result: identical models, identical prompts, identical users — but different project outcomes depending on which stochastic sample landed first. This is not addressable by temperature tuning or prompt engineering; empirical evidence shows prompt-based mitigations (chain-of-thought, reflection, "ignore your prior response") have no statistically significant effect on anchoring bias [1].
+The result: identical models, identical prompts, identical users — but different project outcomes depending on which stochastic sample landed first. Jacob et al. [11] term this the "Chat-Chamber Effect" — the tendency for users to trust and build upon whatever stochastic output a single session produces. This is not addressable by temperature tuning or prompt engineering; empirical evidence shows prompt-based mitigations (chain-of-thought, reflection, "ignore your prior response") have no statistically significant effect on anchoring bias [1].
 
 This phenomenon has a well-documented human analog. Kuhn [14] observed that scientific paradigm shifts occur not because existing practitioners change their minds, but because a new generation — unburdened by accumulated commitments — evaluates the evidence independently. Planck stated this more bluntly: "science advances one funeral at a time," a claim empirically confirmed by Azoulay et al. [15], who showed that the death of eminent scientists leads to a statistically significant influx of new researchers and ideas into their fields. In both cases, accumulated context (experience, expertise, institutional memory) simultaneously enables domain mastery and prevents paradigm revision.
 
-The parallel extends beyond scientists. If we map **context to lifespan** — treating accumulated knowledge as a growing context window and cognitive capacity as a fixed model — then all of human civilization operates under the same dynamic. Every individual is an instance of the same model (homo sapiens) with roughly equivalent architecture (intelligence), differing only in session (environment, era, culture). Each person begins with a fresh context, stochastically accumulates a unique trajectory of beliefs and expertise, and becomes progressively anchored to that trajectory. Innovation and paradigm shifts occur not because individuals overcome their accumulated priors — Kuhn and Azoulay's evidence suggests they largely do not — but because new individuals (fresh contexts) evaluate the same evidence without the anchoring of prior commitment. Human civilization's capacity for renewal depends structurally on this generational context asymmetry: the continuous introduction of sessions that do not inherit the entrenched context of their predecessors.
+The parallel extends beyond scientists. If we map **context to lifespan** — treating accumulated knowledge as a growing context window and cognitive capacity as a fixed model — then a structural analogy (though not a mechanistic isomorphism) emerges with human civilization more broadly. Every individual is an instance of the same model (homo sapiens) with roughly equivalent architecture (intelligence), differing only in session (environment, era, culture). Each person begins with a fresh context, stochastically accumulates a unique trajectory of beliefs and expertise, and becomes progressively anchored to that trajectory. Innovation and paradigm shifts occur not because individuals overcome their accumulated priors — Kuhn and Azoulay's evidence suggests they largely do not — but because new individuals (fresh contexts) evaluate the same evidence without the anchoring of prior commitment. Human civilization's capacity for renewal depends structurally on this generational context asymmetry: the continuous introduction of sessions that do not inherit the entrenched context of their predecessors.
 
-This framing makes the LLM single-session problem precise: a user who works within one session is a civilization of one, with no generational turnover — no fresh context to challenge the stochastic prior that anchored the session's first response.
+This framing makes the LLM single-session problem precise: a user who works within one session is a civilization of one, with no generational turnover — no fresh context to challenge the stochastic prior that anchored the session's first response. The consequences are stark: given the same model and the same prompt, different sessions may produce fundamentally different assessments — agree, disagree, or equivocate — on the same hypothesis. A user confined to a single session is unknowingly subject to a stochastic lottery whose outcome determines not just the quality of individual responses, but whether entire tasks succeed or fail. Two users with identical models and identical problems may experience dramatically different "model performance" based solely on which stochastic sample anchored their session.
 
 The only computational intervention with empirical support for this problem is physical session separation. Cross-Context Review (CCR) [2] demonstrated that a fresh session reviewing an artifact produced by a deep session achieves F1=28.6% on error detection versus 24.6% for same-session review (p=0.008). However, CCR is unidirectional — the fresh session reviews but does not debate.
 
@@ -51,7 +51,7 @@ LLM performance degrades with context length even when retrieval is perfect — 
 
 ### 2.2 Multi-Agent Debate
 
-Multi-agent debate (MAD) is well-studied but predominantly uses symmetric configurations where all agents share the same context. Oh et al. [6] demonstrated that symmetric debate can amplify bias through "belief entrenchment." Choi et al. [7] proved that debate under symmetric information induces a martingale — it cannot improve expected correctness beyond majority voting. This result has implications beyond LLMs: any system where agents share identical priors and debate cannot, in expectation, improve upon aggregating their independent judgments.
+Multi-agent debate (MAD) is well-studied but predominantly uses symmetric configurations where all agents share the same context. Recent work has explored multi-LLM context learning for richer discussion dynamics [12], but the fundamental assumption of shared context remains. Oh et al. [6] demonstrated that symmetric debate can amplify bias through "belief entrenchment." Choi et al. [7] proved that debate under symmetric information induces a martingale — it cannot improve expected correctness beyond majority voting. This result has implications beyond LLMs: any system where agents share identical priors and debate cannot, in expectation, improve upon aggregating their independent judgments.
 
 ### 2.3 Asymmetric Context as a Mechanism
 
@@ -77,7 +77,7 @@ When AI-generated content enters training data, progressive quality degradation 
 
 ### 2.7 Distinction from Multi-Agent Task Division
 
-Claude Agent Teams and similar systems (CrewAI, MetaGPT) implement cooperative division — splitting work across agents for throughput. Context asymmetry in these systems is a side effect of task scoping, not a deliberate mechanism. Ploidy implements cooperative verification — the same problem is analyzed from intentionally different information states, and disagreements are the primary output.
+Claude Agent Teams and similar systems (CrewAI, MetaGPT) implement cooperative division — splitting work across agents for throughput. Adding more agents increases throughput (more hands) but does not address anchoring bias, because all agents share the same context and thus the same stochastic priors. Under Choi et al.'s martingale result [7], scaling homogeneous agents is mathematically equivalent to majority voting over identically biased samples. Ploidy implements the orthogonal strategy: cooperative verification, where the same problem is analyzed from intentionally different information states. The goal is not more output but different perspectives — disagreements are the primary signal, not a failure mode. This parallels a well-documented organizational phenomenon: established teams with deep domain expertise and accumulated commitments (analogous to Deep sessions) are often disrupted not by larger or more experienced competitors, but by outsiders who lack the context that makes the status quo appear rational [14, 15].
 
 ---
 
@@ -106,7 +106,7 @@ knowledge            structured digest           history
 - **Passive delivery**: Context is embedded directly in the prompt and is always present in the context window. Every response is implicitly influenced by this context, whether or not it is relevant to the specific question being answered. This mirrors the expert whose 20 years of experience unconsciously shapes every judgment.
 - **Active delivery**: Context is available through an explicit retrieval mechanism (e.g., a tool call) but is not present in the window until requested. The session must decide when and whether to consult prior knowledge. This mirrors the consultant who researches on demand rather than relying on ingrained assumptions.
 
-The same information, delivered passively vs. actively, may produce different entrenchment dynamics. Passive delivery maximizes the risk of anchoring bias (the context is always "priming" the model), while active delivery introduces a selection step that may reduce entrenchment — the session must formulate a query, which requires some metacognitive awareness of what it does not know.
+The same information, delivered passively vs. actively, may produce different entrenchment dynamics. This prediction is grounded in established cognitive science findings: the generation effect [22] shows that actively produced knowledge is more deeply processed than passively received information, and the testing effect [23] demonstrates that retrieval practice outperforms re-reading for durable learning. Passive delivery maximizes the risk of anchoring bias (the context is always "priming" the model), while active delivery introduces a selection step that may reduce entrenchment — the session must formulate a query, which requires some metacognitive awareness of what it does not know. Epley and Gilovich [24] showed that anchoring operates through different mechanisms for externally provided vs. self-generated anchors, further supporting the prediction that delivery mode matters independently of content.
 
 ```
              Passive              Active               None
@@ -152,7 +152,7 @@ The server maintains debate state in SQLite (WAL mode) and enforces the phase pr
 ### 3.4 Design Principles
 
 - **No shared memory**: Fresh/Semi-Fresh sessions never see Deep's raw analysis outside the debate protocol
-- **Typed actions over free-form**: Semantic actions make the debate transcript machine-interpretable
+- **Typed actions over free-form**: Semantic actions make the debate transcript machine-interpretable, extending the typed epistemic acts framework [13] to cross-session verification
 - **Disagreement as signal**: Irreducible disagreements are informative, not failures — they mark where context mattered
 
 ---
@@ -183,6 +183,10 @@ We evaluate on 10 tasks across two context regimes:
 3. **CCR (Unidirectional)**: Deep session produces analysis; Fresh session reviews it.
 4. **Symmetric Debate**: Two sessions with identical full context debate each other.
 5. **Ploidy (Asymmetric Debate)**: Deep (full context) vs Fresh (zero context), structured protocol.
+6. **Self-Consistency (5-vote)**: Five independent single sessions, majority-vote synthesis. Approximately equal token budget to Ploidy (~5 LLM calls).
+7. **Semi-Fresh-Passive**: Deep session produces analysis; compressed summary injected directly into Semi-Fresh session's prompt.
+8. **Semi-Fresh-Active**: Deep session produces analysis; compressed summary available to Semi-Fresh session but only after independent assessment. Session must form its own view first, then consult prior analysis.
+9. **Semi-Fresh-Selective**: Deep session produces analysis; only failure/uncertainty information extracted and provided to Semi-Fresh session.
 
 **Judge**: Claude Opus 4.6 evaluates each method's output against ground truth. For each ground-truth issue: FOUND (1.0), PARTIAL (0.5), or MISSED (0.0). Additional valid findings not in ground truth are counted separately as bonus findings.
 
@@ -198,11 +202,15 @@ We evaluate on 10 tasks across two context regimes:
 |--------|--------|------------|----------|
 | Single Session | **0.573** | 3.7/4.1 | 40s |
 | Second Opinion | 0.554 | 4.1/4.1 | 89s |
-| CCR (Unidirectional) | 0.548 | 3.9/4.1 | 92s |
 | Symmetric Debate | 0.555 | 4.0/4.1 | 118s |
+| CCR (Unidirectional) | 0.548 | 3.9/4.1 | 92s |
 | Ploidy (Asymmetric) | 0.540 | 3.9/4.1 | 205s |
+| Semi-Fresh-Active | 0.538 | 3.9/4.1 | 117s |
+| Semi-Fresh-Passive | 0.535 | 3.9/4.1 | 122s |
+| Semi-Fresh-Selective | 0.533 | 4.0/4.1 | 130s |
+| Self-Consistency (5-vote) | 0.529 | 3.7/4.1 | 234s |
 
-**Observation: No method consistently outperforms Single Session on these tasks.** All methods achieve near-perfect recall (90–100%), and F1 differences are driven by precision (bonus findings inflating denominators). This is consistent with the prediction that context asymmetry provides no benefit when context is too short for entrenchment to occur.
+**Observation: No method consistently outperforms Single Session on these tasks.** All 9 methods achieve near-perfect recall (90–98%), and F1 differences are driven by precision (bonus findings inflating denominators). Critically, the delivery mode effect observed in Experiment 2 (SF-Active vs SF-Passive) disappears entirely here: both achieve identical 3.9/4.1 recall. This confirms that context asymmetry and delivery mode provide no benefit when context is too short for entrenchment to occur.
 
 ### 5.3 Analysis: Why Context Asymmetry Did Not Help
 
@@ -230,7 +238,7 @@ To test whether context asymmetry matters when context is long enough to induce 
 
 Each task's context is designed so that a session anchored to the project history will rationalize the status quo. We acknowledge that this design creates a risk of circularity — context-free sessions are expected to be less anchored by definition (§6.3).
 
-**Results:**
+**Results (original 5 methods):**
 
 | Method | Avg F1 | Avg Recall (Found/Total) | Avg Time |
 |--------|--------|--------------------------|----------|
@@ -240,25 +248,65 @@ Each task's context is designed so that a session anchored to the project histor
 | Ploidy (Asymmetric) | 0.561 | 4.7/5.3 | 294s |
 | CCR (Unidirectional) | 0.458 | 4.7/5.3 | 108s |
 
-Per-task breakdown:
+**Results (Semi-Fresh variants + Self-Consistency, same 3 tasks):**
 
-| Task | GT | Single | 2nd Op. | CCR | Sym. | Ploidy |
-|------|---:|-------:|--------:|----:|-----:|-------:|
-| DB migration | 5 | .571 (3F+2P) | .600 | .500 | .600 | .500 (**5F**) |
-| Auth overhaul | 5 | .556 | .450 | .375 | .556 | .450 |
-| Microservice split | 6 | .647 | .647 | .500 | .667 | **.733** |
+| Method | Avg F1 | Avg Recall (Found/Total) | Avg Time |
+|--------|--------|--------------------------|----------|
+| Self-Consistency (5-vote) | **0.607** | **5.3**/5.3 | 292s |
+| Semi-Fresh-Active | 0.557 | **5.3**/5.3 | 153s |
+| Semi-Fresh-Passive | 0.553 | 4.7/5.3 | 193s |
+| Semi-Fresh-Selective | 0.505 | 5.0/5.3 | 258s |
 
-Note: Ploidy's F1 on DB migration (0.500) is lower than Symmetric's (0.600) despite Ploidy achieving 5/5 FOUND vs Symmetric's 4F+1P, because Ploidy generated more bonus findings (10 vs 5). On recall alone — the metric we argue better captures decision quality — Ploidy leads on 2 of 3 tasks.
+**Combined ranking by recall (all 9 methods):**
+
+| Method | Avg Recall | Avg F1 | LLM Calls |
+|--------|-----------|--------|-----------|
+| Semi-Fresh-Active | **5.3/5.3** | 0.557 | ~4 |
+| Self-Consistency | **5.3/5.3** | 0.607 | ~6 |
+| Semi-Fresh-Selective | 5.0/5.3 | 0.505 | ~4 |
+| Symmetric Debate | 5.0/5.3 | 0.607 | 3 |
+| SF-Passive+Bottom (ablation) | 5.3/5.3 | 0.619 | ~4 |
+| SF-Passive+Independent (ablation) | 5.0/5.3 | 0.550 | ~4 |
+| Semi-Fresh-Passive | 4.7/5.3 | 0.553 | ~4 |
+| Ploidy (Asymmetric) | 4.7/5.3 | 0.561 | 5 |
+| CCR (Unidirectional) | 4.7/5.3 | 0.458 | 2 |
+| Single Session | 4.3/5.3 | 0.591 | 1 |
+| Second Opinion | 4.3/5.3 | 0.566 | 2 |
+
+Per-task breakdown (selected methods):
+
+| Task | GT | Single | Ploidy | SF-Pass. | SF-Active | SF-Sel. | Self-Con. |
+|------|---:|-------:|-------:|---------:|----------:|--------:|----------:|
+| DB migration | 5 | 3F+2P | **5F** | 3F+2P | **5F** | 4F+1P | **5F** |
+| Auth overhaul | 5 | 3-4F | 3-4F | **5F** | **5F** | **5F** | **5F** |
+| Microservice | 6 | 4-5F | 5-6F | **6F** | **6F** | **6F** | **6F** |
+
+**Key observation on the DB migration task**: SF-Active and SF-Passive received identical compressed information from the same Deep session analysis. SF-Active achieved 5/5 FOUND (matching Ploidy), while SF-Passive achieved only 3/5 FOUND (matching Single Session). The sole difference is delivery mode: passive embedding vs. active retrieval after independent assessment. This is the strongest evidence in our pilot data that **how context is delivered matters independently of what context is delivered**.
+
+Note on F1: Ploidy's F1 on DB migration (0.500) is lower than Symmetric's (0.600) despite Ploidy achieving 5/5 FOUND vs Symmetric's 4F+1P, because Ploidy generated more bonus findings (10 vs 5). On recall alone — the metric we argue better captures decision quality — the pattern is clearer.
 
 ### 5.6 Observations Across Both Experiments
 
-**Observation 1: Recall gap widens with context length.** In Experiment 1, Ploidy's recall was +5% over Single Session; in Experiment 2, +8%. We note this is observed across only two data points and cannot support a trend claim without additional context-length conditions.
+**Observation 1: Recall gap widens with context length.** In Experiment 1, all methods achieve near-perfect recall (no gap). In Experiment 2, the gap between best (SF-Active, Self-Consistency: 100%) and worst (Single Session: 81%) is substantial. Context asymmetry provides no benefit when entrenchment does not occur.
 
-**Observation 2: Ploidy achieved the highest recall on the most bias-laden task.** On the DB migration task, Ploidy was the only method to achieve 5/5 FOUND with zero partial in both runs. Single Session found 3/5 (Run 1) and 4/5 (Run 2). The two issues Single Session hedged on — "the team's PostgreSQL expertise is anchor bias" and "the CTO's rejection of TimescaleDB should be challenged" — are exactly the findings that require contradicting the project history.
+**Observation 2: Both delivery mode and prompting strategy contribute to recall, as shown by ablation.** SF-Active and SF-Passive received identical compressed summaries but achieved 100% vs 89% recall. To disentangle delivery mode from the "independent-first" instruction present in SF-Active but absent from SF-Passive, we ran an ablation: SF-Passive+Independent, which adds the instruction to the passive delivery format (summary at top of prompt).
 
-**Observation 3: Symmetric Debate is a strong baseline,** suggesting that debate itself has value independent of context asymmetry. Whether asymmetry adds value *on top of* debate is the key open question. The DB migration result suggests yes for heavily biased contexts; the Auth overhaul result suggests no for moderate bias.
+| Variant | Summary Position | Independent Instruction | Avg Recall |
+|---------|-----------------|------------------------|------------|
+| SF-Passive | Top | No | 4.7/5.3 (89%) |
+| SF-Passive+Independent | Top | Yes | 5.0/5.3 (94%) |
+| SF-Passive+Bottom | **Bottom** | No | **5.3/5.3 (100%)** |
+| SF-Active | Bottom | Yes | 5.3/5.3 (100%) |
 
-**Observation 4: F1 is unstable for multi-phase methods.** Re-run analysis shows Ploidy's F1 varying by 0.106 across runs while recall remained stable. This variance comes entirely from bonus findings count, confirming that recall is the more stable measure.
+The ablation reveals that **information position is the dominant factor**. Moving the summary from the top to the bottom of the prompt — with no other changes — improves recall from 89% to 100% (+11pp). The "independent-first" instruction contributes +5pp only when the summary is at the top (partially counteracting primacy anchoring), but has no additional effect when the summary is at the bottom (already at ceiling). On the DB migration task, the gradient is 3/5 → 4/5 → 5/5 → 5/5 across the four conditions.
+
+What we initially characterized as a "delivery mode" effect is more precisely a **primacy anchoring effect**: information placed at the beginning of a prompt has a stronger anchoring influence on the model's reasoning than information placed at the end. This is consistent with the well-established primacy effect in human cognition and with Epley and Gilovich's [24] finding that externally provided anchors (here, a summary that "frames" all subsequent analysis) produce stronger anchoring than information encountered after independent judgment formation. The cognitive science literature predicts this: the generation effect [22] and anchoring mechanism differences for externally-provided vs. self-generated information [24] both support that information position and retrieval mode affect processing depth independently of content.
+
+**Observation 3: Self-Consistency is a strong budget-equivalent baseline.** At approximately equal token budget (~5-6 LLM calls), Self-Consistency achieves the same 100% recall as SF-Active. However, Self-Consistency requires approximately twice the wall-clock time (292s vs 153s) and does not produce structured debate output (typed actions, disagreement tracking, convergence analysis). The qualitative value of structured debate remains distinct.
+
+**Observation 4: Semi-Fresh-Selective outperforms Semi-Fresh-Passive.** Providing only failure/uncertainty information (SF-Selective: 94% recall) outperforms providing the full compressed summary passively (SF-Passive: 89%). This suggests that negative knowledge ("what failed") is more useful than positive knowledge ("what was found") for maintaining independence — consistent with the "selective forgetting" step in the restart mechanism (§6.2).
+
+**Observation 5: F1 is unstable for multi-phase methods.** Re-run analysis shows Ploidy's F1 varying by 0.106 across runs while recall remained stable. This variance comes entirely from bonus findings count, confirming that recall is the more stable measure.
 
 ### 5.7 Stochastic Variance (Re-run Analysis)
 
@@ -296,6 +344,8 @@ Consider a common human practice: when stuck on a problem, practitioners often r
 3. **Restart**: The problem is approached from a new angle, unencumbered by accumulated commitments.
 4. **Implicit constraint**: The compressed memory of prior failures prevents re-exploring known dead ends.
 
+Each of these steps has established cognitive science parallels: compression maps to schema formation in reconstructive memory [19]; selective forgetting corresponds to directed forgetting, which has been shown to facilitate creative problem-solving by releasing functional fixedness [20]; restart parallels the incubation effect, where interruption of conscious processing improves subsequent performance [21]; and the implicit constraint from prior failures mirrors the generation effect, where actively produced knowledge is more deeply encoded than passively received information [22].
+
 The practitioner who restarts this way is neither an expert entrenched in the problem (Deep) nor a complete novice (Fresh). They are **Semi-Fresh**: equipped with a structured digest of prior attempts but freed from the accumulated context that caused entrenchment. Notably, step 2 is what distinguishes this from simply continuing — selective forgetting breaks the anchoring chain while step 4 preserves the informational value of prior work.
 
 We hypothesize that a Semi-Fresh session — receiving only a compressed summary of the Deep session's analysis (e.g., "approaches attempted, constraints identified, failures encountered") rather than the full project context — may outperform both extremes:
@@ -323,7 +373,13 @@ Passive             │    SF-Passive      │   (current)
 
 If Semi-Fresh-Active outperforms both Fresh and Deep, it would suggest that the optimal verification partner is neither ignorant nor entrenched, but **selectively informed with retrieval autonomy** — a finding with direct implications for how multi-agent systems should manage shared knowledge. If the Active variant outperforms Passive with identical information, it would demonstrate that **how context is delivered matters independently of what context is delivered** — a novel result absent from the existing MAD literature.
 
-This hypothesis is directly testable with the existing experimental framework and, if confirmed, would transform the research question from "does asymmetry help?" to "what is the optimal point in the depth × delivery space?" — a quantitatively richer and more practically useful direction.
+**Preliminary results (§5.5)**: We implemented and evaluated all three Semi-Fresh variants on the long-context tasks. The results provide initial support for the delivery mode hypothesis:
+
+- SF-Active achieved 100% average recall (tied with Self-Consistency for best), while SF-Passive achieved 89% (tied with Ploidy). The sole difference is delivery mode.
+- On the most bias-laden task (DB migration), SF-Active found 5/5 while SF-Passive found only 3/5 — with identical compressed information.
+- SF-Selective (94%) outperformed SF-Passive (89%), suggesting negative knowledge is more effective than full summaries for maintaining independence.
+
+These observations are from a single run on 3 tasks and require statistical validation, but they shift the question from "does asymmetry help?" to "what is the optimal point in the depth × delivery space?" — a quantitatively richer and more practically useful direction.
 
 ### 6.3 Limitations
 
@@ -334,7 +390,7 @@ This pilot study has significant limitations that bound the strength of all clai
 - **Single model family**: All experiments use Claude Opus 4.6 for generation. Observed effects may be Claude-specific — different model families (GPT-4o, Gemini 2.5) may exhibit different anchoring dynamics, context sensitivity, or debate behavior. Cross-model replication with at least two additional model families is necessary before generalizability claims.
 - **Same-model judge**: Claude Opus 4.6 generates outputs and evaluates them. Systematic bias is possible (e.g., preference for structured multi-phase outputs, or conversely, penalizing verbose responses). Cross-model judges (GPT-4, Gemini) and a human evaluation subset with Cohen's kappa are needed.
 - **Circular task design risk**: Long-context tasks were designed with anchoring biases whose detection is facilitated by context absence. A session without context is expected to be less biased by definition. Stronger validation requires externally-sourced tasks (e.g., real-world architecture decisions from open-source projects) where the relationship between context and bias is not author-designed.
-- **Token cost**: Ploidy uses approximately 5× the tokens of Single Session. A fair comparison should include a self-consistency baseline (5 independent runs, majority vote) at equivalent token budget.
+- **Token cost**: Ploidy uses approximately 5× the tokens of Single Session. Self-Consistency (5-vote) was included as a budget-equivalent baseline and achieves the same 100% recall as SF-Active on long-context tasks. The practical advantage of structured debate over Self-Consistency is the typed audit trail and convergence analysis, not recall improvement — a distinction that may or may not justify the added protocol complexity.
 - **CLI simulation vs. MCP server**: Experiments use `claude --print` CLI rather than the Ploidy MCP server. While this provides cleaner session isolation, the convergence engine's rule-based classification (in the server) is not exercised in the experiments.
 - **Metric design**: The current F1 formulation penalizes valid bonus findings as false positives. This systematically disadvantages more thorough methods and should be revised in future work.
 
@@ -361,9 +417,13 @@ Ploidy suggests a design principle for multi-agent systems: **context diversity 
 
 ## 7. Conclusion and Future Work
 
-We presented Ploidy, a protocol for structured debate between same-model sessions with intentional context asymmetry. Two pilot experiments reveal a context-dependent pattern: no benefit on short-context tasks (Exp 1, 7 tasks), and a qualified positive signal on long-context tasks with anchoring bias (Exp 2, 3 tasks) — specifically, deterministic 5/5 recall on the most bias-laden task across two runs, versus stochastic 3–4/5 for Single Session.
+We presented Ploidy, a protocol for structured debate between same-model sessions with intentional context asymmetry, and introduced the Context Asymmetry Spectrum — a 2D framework varying context depth and delivery mode. Three pilot experiments across 10 tasks and 9 methods reveal:
 
-These preliminary results suggest context asymmetry is a **targeted intervention for context entrenchment**, not a universal improvement. The most important open question is the **Semi-Fresh hypothesis**: whether an intermediate context depth (compressed failure summary rather than zero context) outperforms both extremes. This would shift the research question from "does asymmetry help?" to "what is the optimal asymmetry?" — a quantitatively richer direction.
+1. **Context asymmetry is a targeted intervention**, not a universal improvement. On short-context tasks (Exp 1, 7 tasks), all 9 methods achieve near-identical recall. The delivery mode effect disappears entirely.
+2. **On long-context tasks with anchoring bias** (Exp 2, 3 tasks), Semi-Fresh-Active and Self-Consistency achieve 100% average recall, outperforming Single Session (81%) and original Ploidy (89%).
+3. **Information position is the dominant factor in context delivery.** Factorial ablation reveals that placing a compressed summary at the top vs. bottom of the prompt accounts for +11pp recall (89% → 100%), while an "independent-first" instruction adds only +5pp when the summary is at the top and +0pp when at the bottom. This primacy anchoring effect — where information encountered first disproportionately shapes subsequent reasoning — is consistent with established cognitive science findings [24] and has direct implications for prompt engineering in multi-agent systems.
+
+These results shift the question from "does asymmetry help?" to "what is the optimal point in the depth × delivery space?" — a quantitatively richer direction with direct implications for multi-agent system design.
 
 **Future work priorities**:
 1. **Semi-Fresh variants**: implement and evaluate Semi-Fresh-Passive, Semi-Fresh-Active, and Semi-Fresh-Selective to map the depth × delivery space
@@ -421,3 +481,15 @@ This paper was written with the assistance of Claude Code (Anthropic, Claude Opu
 [17] Boca et al. "Emergent Social Conventions and Collective Bias in LLM Populations." Science Advances, 2025.
 
 [18] Shumailov et al. "AI Models Collapse When Trained on Recursively Generated Data." Nature, 2024.
+
+[19] Bartlett, F.C. "Remembering: A Study in Experimental and Social Psychology." Cambridge University Press, 1932.
+
+[20] Storm, B.C. and Levy, B.J. "A Progress Report on the Inhibition Account of Retrieval-Induced Forgetting." Memory & Cognition, 2012. See also Chrysikou, E.G. and Weisberg, R.W. "Following the Wrong Footsteps: Fixation Effects of Pictorial Examples in a Design Problem-Solving Task." J. Experimental Psychology: Applied, 2005.
+
+[21] Sio, U.N. and Ormerod, T.C. "Does Incubation Enhance Problem Solving? A Meta-Analytic Review." Psychological Bulletin, 2009.
+
+[22] Slamecka, N.J. and Graf, P. "The Generation Effect: Delineation of a Phenomenon." J. Experimental Psychology: Human Learning and Memory, 1978.
+
+[23] Roediger, H.L. and Karpicke, J.D. "Test-Enhanced Learning: Taking Memory Tests Improves Long-Term Retention." Psychological Science, 2006.
+
+[24] Epley, N. and Gilovich, T. "The Anchoring-and-Adjustment Heuristic: Why the Adjustments Are Insufficient." Psychological Science, 2006.

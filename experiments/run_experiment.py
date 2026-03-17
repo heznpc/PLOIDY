@@ -540,6 +540,93 @@ def method_semi_fresh_active(task: Task) -> str:
     )
 
 
+def method_semi_fresh_passive_independent(task: Task) -> str:
+    """Ablation: Passive delivery + independent-first instruction.
+    Same as SF-Passive but adds 'first analyze independently' instruction.
+    If this matches SF-Active's recall → instruction is the driver, not delivery mode.
+    If this matches SF-Passive's recall → delivery mode is the driver."""
+    # Deep position
+    deep_pos = call_llm(
+        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
+
+    # Compress Deep's position
+    summary = _compress_position(deep_pos)
+
+    # Ablation: summary at TOP (passive) but with independent-first instruction
+    semi_fresh_pos = call_llm(
+        f"A previous reviewer analyzed this code/system and produced this summary:\n\n"
+        f"--- PRIOR ANALYSIS SUMMARY ---\n{summary}\n--- END SUMMARY ---\n\n"
+        f"INSTRUCTION: First, write your own independent analysis of the code/system below. "
+        f"Then, revisit the prior summary above and note any additional issues or disagreements.\n\n"
+        f"{task.prompt}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
+
+    # Convergence
+    convergence = call_llm(
+        f"Two reviewers analyzed this code/system:\n\n"
+        f"=== Deep Session (full project context) ===\n{deep_pos}\n\n"
+        f"=== Semi-Fresh Session (passive delivery + independent instruction) ===\n{semi_fresh_pos}\n\n"
+        f"Synthesize a final list of ALL confirmed issues. For each:\n"
+        f"1. The issue\n2. Who found it (Deep, Semi-Fresh, or Both)\n"
+        f"3. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
+    )
+
+    return (
+        f"=== Deep Position ===\n{deep_pos}\n\n"
+        f"=== Compressed Summary (given to Semi-Fresh) ===\n{summary}\n\n"
+        f"=== Semi-Fresh Position ===\n{semi_fresh_pos}\n\n"
+        f"=== Convergence ===\n{convergence}"
+    )
+
+
+def method_semi_fresh_passive_bottom(task: Task) -> str:
+    """Ablation: Passive delivery with summary at BOTTOM (not top).
+    Same as SF-Passive but summary placed after the prompt, not before.
+    If this matches SF-Active's recall → position (primacy/recency) is the driver.
+    If this matches SF-Passive's recall → position doesn't matter, delivery mode does."""
+    # Deep position
+    deep_pos = call_llm(
+        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
+
+    # Compress Deep's position
+    summary = _compress_position(deep_pos)
+
+    # Ablation: summary at BOTTOM (passive, no independent instruction)
+    semi_fresh_pos = call_llm(
+        f"{task.prompt}\n\n"
+        f"A previous reviewer analyzed this code/system and produced the summary below.\n"
+        f"Use the prior summary as background context, but form your own conclusions.\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.\n\n"
+        f"--- PRIOR ANALYSIS SUMMARY ---\n{summary}\n--- END SUMMARY ---"
+    )
+
+    # Convergence
+    convergence = call_llm(
+        f"Two reviewers analyzed this code/system:\n\n"
+        f"=== Deep Session (full project context) ===\n{deep_pos}\n\n"
+        f"=== Semi-Fresh Session (passive delivery, summary at bottom) ===\n{semi_fresh_pos}\n\n"
+        f"Synthesize a final list of ALL confirmed issues. For each:\n"
+        f"1. The issue\n2. Who found it (Deep, Semi-Fresh, or Both)\n"
+        f"3. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
+    )
+
+    return (
+        f"=== Deep Position ===\n{deep_pos}\n\n"
+        f"=== Compressed Summary (given to Semi-Fresh) ===\n{summary}\n\n"
+        f"=== Semi-Fresh Position ===\n{semi_fresh_pos}\n\n"
+        f"=== Convergence ===\n{convergence}"
+    )
+
+
 def method_semi_fresh_selective(task: Task) -> str:
     """Semi-Fresh (Selective): only failure/uncertainty info provided, not full findings."""
     # Deep position
@@ -680,6 +767,8 @@ METHODS = {
     "sf_passive": ("Semi-Fresh (Passive)", method_semi_fresh_passive),
     "sf_active": ("Semi-Fresh (Active)", method_semi_fresh_active),
     "sf_selective": ("Semi-Fresh (Selective)", method_semi_fresh_selective),
+    "sf_passive_indep": ("SF-Passive+Independent", method_semi_fresh_passive_independent),
+    "sf_passive_bottom": ("SF-Passive+Bottom", method_semi_fresh_passive_bottom),
 }
 
 

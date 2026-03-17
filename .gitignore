@@ -54,3 +54,4 @@ docs/internal/
 
 # Experiment results (large, local only)
 experiments/results/
+paper/latex/main.pdf
