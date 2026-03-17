@@ -26,6 +26,10 @@ The result: identical models, identical prompts, identical users — but differe
 
 This phenomenon has a well-documented human analog. Kuhn [14] observed that scientific paradigm shifts occur not because existing practitioners change their minds, but because a new generation — unburdened by accumulated commitments — evaluates the evidence independently. Planck stated this more bluntly: "science advances one funeral at a time," a claim empirically confirmed by Azoulay et al. [15], who showed that the death of eminent scientists leads to a statistically significant influx of new researchers and ideas into their fields. In both cases, accumulated context (experience, expertise, institutional memory) simultaneously enables domain mastery and prevents paradigm revision.
 
+The parallel extends beyond scientists. If we map **context to lifespan** — treating accumulated knowledge as a growing context window and cognitive capacity as a fixed model — then all of human civilization operates under the same dynamic. Every individual is an instance of the same model (homo sapiens) with roughly equivalent architecture (intelligence), differing only in session (environment, era, culture). Each person begins with a fresh context, stochastically accumulates a unique trajectory of beliefs and expertise, and becomes progressively anchored to that trajectory. Innovation and paradigm shifts occur not because individuals overcome their accumulated priors — Kuhn and Azoulay's evidence suggests they largely do not — but because new individuals (fresh contexts) evaluate the same evidence without the anchoring of prior commitment. Human civilization's capacity for renewal depends structurally on this generational context asymmetry: the continuous introduction of sessions that do not inherit the entrenched context of their predecessors.
+
+This framing makes the LLM single-session problem precise: a user who works within one session is a civilization of one, with no generational turnover — no fresh context to challenge the stochastic prior that anchored the session's first response.
+
 The only computational intervention with empirical support for this problem is physical session separation. Cross-Context Review (CCR) [2] demonstrated that a fresh session reviewing an artifact produced by a deep session achieves F1=28.6% on error detection versus 24.6% for same-session review (p=0.008). However, CCR is unidirectional — the fresh session reviews but does not debate.
 
 We extend CCR from unidirectional review to **bidirectional structured debate** and introduce the **Context Asymmetry Spectrum** — a continuum from full context (Deep) through compressed context (Semi-Fresh) to zero context (Fresh). This spectrum recognizes that the optimal information state for a challenger may be neither complete ignorance nor full knowledge, but an intermediate point analogous to the "experienced outsider" who brings domain awareness without institutional entrenchment.
@@ -285,7 +289,14 @@ The two experiments suggest a conditional pattern, consistent with Young [10]'s 
 
 Our current design tests only the extremes of the Context Asymmetry Spectrum: full context (Deep) vs. zero context (Fresh). This leaves an important region unexplored — one that may contain the optimal operating point.
 
-Consider a common human practice: when stuck on a problem, practitioners often restart from scratch — but they carry a compressed memory of what was tried and what failed. They are neither experts entrenched in the problem (Deep) nor complete novices (Fresh). They are **Semi-Fresh**: equipped with a structured digest of prior attempts but freed from the accumulated context that caused entrenchment.
+Consider a common human practice: when stuck on a problem, practitioners often restart from scratch — but they carry a compressed memory of what was tried and what failed. This behavior decomposes into four cognitive steps:
+
+1. **Compression**: The full work history is distilled to "what was tried, what failed, and why."
+2. **Selective forgetting**: Implementation details and dead-end reasoning are discarded, reducing context volume.
+3. **Restart**: The problem is approached from a new angle, unencumbered by accumulated commitments.
+4. **Implicit constraint**: The compressed memory of prior failures prevents re-exploring known dead ends.
+
+The practitioner who restarts this way is neither an expert entrenched in the problem (Deep) nor a complete novice (Fresh). They are **Semi-Fresh**: equipped with a structured digest of prior attempts but freed from the accumulated context that caused entrenchment. Notably, step 2 is what distinguishes this from simply continuing — selective forgetting breaks the anchoring chain while step 4 preserves the informational value of prior work.
 
 We hypothesize that a Semi-Fresh session — receiving only a compressed summary of the Deep session's analysis (e.g., "approaches attempted, constraints identified, failures encountered") rather than the full project context — may outperform both extremes:
 
@@ -320,6 +331,7 @@ This pilot study has significant limitations that bound the strength of all clai
 
 - **Statistical power**: 7+3 tasks, single run per method-task pair (re-run on Exp 2 only). Observed method differences (F1 Δ ≈ 0.03) are smaller than within-method variance (F1 Δ ≈ 0.10). No statistical tests are reported because the sample size and run count cannot support them. Minimum requirement for validated claims: 30+ tasks, 5+ runs, paired statistical tests (Wilcoxon signed-rank or bootstrap CI).
 - **Author-defined ground truth**: All ground-truth issues were defined by the authors without independent expert validation. Bonus findings identified by the judge suggest the ground truth is incomplete. Future work should use independently validated benchmarks or multiple expert annotators with inter-rater agreement metrics.
+- **Single model family**: All experiments use Claude Opus 4.6 for generation. Observed effects may be Claude-specific — different model families (GPT-4o, Gemini 2.5) may exhibit different anchoring dynamics, context sensitivity, or debate behavior. Cross-model replication with at least two additional model families is necessary before generalizability claims.
 - **Same-model judge**: Claude Opus 4.6 generates outputs and evaluates them. Systematic bias is possible (e.g., preference for structured multi-phase outputs, or conversely, penalizing verbose responses). Cross-model judges (GPT-4, Gemini) and a human evaluation subset with Cohen's kappa are needed.
 - **Circular task design risk**: Long-context tasks were designed with anchoring biases whose detection is facilitated by context absence. A session without context is expected to be less biased by definition. Stronger validation requires externally-sourced tasks (e.g., real-world architecture decisions from open-source projects) where the relationship between context and bias is not author-designed.
 - **Token cost**: Ploidy uses approximately 5× the tokens of Single Session. A fair comparison should include a self-consistency baseline (5 independent runs, majority vote) at equivalent token budget.
@@ -330,7 +342,18 @@ This pilot study has significant limitations that bound the strength of all clai
 
 The stochastic prior lock-in problem is not unique to LLMs. It mirrors the well-documented phenomenon in human organizations and scientific communities where accumulated context — expertise, institutional memory, prior commitments — simultaneously enables domain mastery and prevents paradigm revision [14, 15]. The only reliable corrective, both historically and in our preliminary observations, is the introduction of a perspective that is not entrenched in the accumulated context.
 
-This has implications for large-scale agent systems. When AI-generated content enters training data, progressive quality degradation occurs across model generations (model collapse [18]). This represents the failure mode when context asymmetry disappears entirely — each generation inherits the previous generation's biases with no fresh perspective. Analogously, scaling agent count in simulations where all agents share the same priors produces verification breadth without verification depth: more samples from the same biased distribution.
+The parallel between human generational turnover and AI session management is instructive:
+
+| | Human generational turnover | AI model/session succession |
+|---|---|---|
+| New generation's context | Fresh — different environment, different experiences | Inherited — trained on prior generation's outputs |
+| Inherited bias | Partial — some cultural transmission, much lost | Total — training data preserves and amplifies biases |
+| Role of "funeral" (Planck) | Naturally extinguishes entrenched perspectives | Absent — prior outputs persist indefinitely in training corpora |
+| Outcome | Paradigm shifts enabled by context asymmetry between generations [14, 15] | Model collapse — progressive homogenization across generations [18] |
+
+Planck's principle works in human civilization precisely because new generations do not fully inherit the context of their predecessors. In AI, training on prior model outputs creates the opposite dynamic: each generation inherits its predecessor's biases verbatim, and the "funeral" that would naturally erode entrenched perspectives never occurs. Model collapse [18] is, in this framing, the consequence of a civilization without generational context asymmetry.
+
+This has implications for large-scale agent systems. Scaling agent count in simulations where all agents share the same priors produces verification breadth without verification depth: more samples from the same biased distribution. Boca et al. [17] showed that LLM populations spontaneously develop collective biases through interaction, even without individual-level bias — a within-generation analog of the cross-generation homogenization that drives model collapse.
 
 Ploidy suggests a design principle for multi-agent systems: **context diversity is more valuable than agent count**. A small number of sessions with deliberately different context depths may produce better decisions than a large homogeneous population — provided the context differences are structured through a protocol that surfaces and reconciles disagreements rather than averaging them away.
 

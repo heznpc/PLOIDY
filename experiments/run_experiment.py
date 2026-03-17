@@ -1,14 +1,26 @@
 """
 Ploidy Experiment Runner
 ========================
-Proves: asymmetric context debate > single session / symmetric debate.
+Evaluates context-asymmetric debate across the Context Asymmetry Spectrum.
 
 Uses `claude --print` CLI (no API key needed, uses Max/Pro subscription).
 Each call = fresh session = perfect context isolation.
 
+Methods (9):
+  single          - Single session, full context
+  second_opinion  - Two independent sessions, concatenated
+  ccr             - CCR: deep produces, fresh reviews
+  symmetric       - Symmetric debate (both full context)
+  ploidy          - Asymmetric debate (deep vs fresh)
+  self_consistency - 5 independent runs + majority vote (same token budget as ploidy)
+  sf_passive      - Semi-Fresh (Passive): compressed summary in prompt
+  sf_active       - Semi-Fresh (Active): summary available, must retrieve after independent analysis
+  sf_selective    - Semi-Fresh (Selective): only failure/uncertainty info provided
+
 Usage:
     python experiments/run_experiment.py
-    python experiments/run_experiment.py --tasks 0,1,2 --methods ploidy,single
+    python experiments/run_experiment.py --tasks 0,1,2 --methods ploidy,single,sf_passive
+    python experiments/run_experiment.py --long --methods single,ploidy,sf_passive,sf_active,sf_selective
 """
 
 import subprocess
@@ -398,6 +410,177 @@ def method_symmetric_debate(task: Task) -> str:
     return f"=== Position A ===\n{pos_a}\n\n=== Position B ===\n{pos_b}\n\n=== Synthesis ===\n{synthesis}"
 
 
+def method_self_consistency(task: Task) -> str:
+    """Baseline 5: 5 independent runs, majority-vote synthesis.
+    Same token budget as Ploidy (~5 LLM calls)."""
+    prompt = (
+        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical."
+    )
+    runs = [call_llm(prompt) for _ in range(5)]
+    synthesis = call_llm(
+        f"Five independent reviewers analyzed the same code/system.\n\n"
+        + "\n\n".join(f"=== Reviewer {i+1} ===\n{r}" for i, r in enumerate(runs))
+        + f"\n\nSynthesize by majority vote: list only issues found by 3+ reviewers. "
+        f"For each, note how many reviewers found it (e.g., 4/5)."
+    )
+    return (
+        "\n\n".join(f"=== Run {i+1} ===\n{r}" for i, r in enumerate(runs))
+        + f"\n\n=== Majority Vote Synthesis ===\n{synthesis}"
+    )
+
+
+def _compress_position(position: str) -> str:
+    """Compress a Deep position into a structured summary for Semi-Fresh sessions."""
+    return call_llm(
+        f"Compress the following code review / architecture analysis into a SHORT structured summary.\n"
+        f"Include ONLY:\n"
+        f"- Key issues found (one line each)\n"
+        f"- Approaches considered\n"
+        f"- Constraints mentioned\n\n"
+        f"Do NOT include the full reasoning or project narrative. Max 300 words.\n\n"
+        f"Analysis to compress:\n{position}"
+    )
+
+
+def _compress_failures_only(position: str) -> str:
+    """Extract only failure/risk information from a position, excluding successful analysis."""
+    return call_llm(
+        f"From the following analysis, extract ONLY:\n"
+        f"- Issues that were flagged as uncertain or low-confidence\n"
+        f"- Risks or concerns that were noted but not fully resolved\n"
+        f"- Limitations or gaps acknowledged by the reviewer\n\n"
+        f"Do NOT include issues the reviewer was confident about.\n"
+        f"Do NOT include the project context or background. Max 200 words.\n\n"
+        f"Analysis:\n{position}"
+    )
+
+
+def method_semi_fresh_passive(task: Task) -> str:
+    """Semi-Fresh (Passive): compressed summary injected into prompt."""
+    # Deep position
+    deep_pos = call_llm(
+        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
+
+    # Compress Deep's position
+    summary = _compress_position(deep_pos)
+
+    # Semi-Fresh session: summary is directly in the prompt (passive delivery)
+    semi_fresh_pos = call_llm(
+        f"A previous reviewer analyzed this code/system and produced this summary:\n\n"
+        f"--- PRIOR ANALYSIS SUMMARY ---\n{summary}\n--- END SUMMARY ---\n\n"
+        f"Now perform your own independent review:\n\n{task.prompt}\n\n"
+        f"Use the prior summary as background context, but form your own conclusions.\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
+
+    # Convergence
+    convergence = call_llm(
+        f"Two reviewers analyzed this code/system:\n\n"
+        f"=== Deep Session (full project context) ===\n{deep_pos}\n\n"
+        f"=== Semi-Fresh Session (received compressed summary only) ===\n{semi_fresh_pos}\n\n"
+        f"Synthesize a final list of ALL confirmed issues. For each:\n"
+        f"1. The issue\n2. Who found it (Deep, Semi-Fresh, or Both)\n"
+        f"3. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
+    )
+
+    return (
+        f"=== Deep Position ===\n{deep_pos}\n\n"
+        f"=== Compressed Summary (given to Semi-Fresh) ===\n{summary}\n\n"
+        f"=== Semi-Fresh Position ===\n{semi_fresh_pos}\n\n"
+        f"=== Convergence ===\n{convergence}"
+    )
+
+
+def method_semi_fresh_active(task: Task) -> str:
+    """Semi-Fresh (Active): summary available via explicit retrieval, not injected."""
+    # Deep position
+    deep_pos = call_llm(
+        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
+
+    # Compress Deep's position
+    summary = _compress_position(deep_pos)
+
+    # Semi-Fresh session: told summary exists, must decide when/whether to use it
+    semi_fresh_pos = call_llm(
+        f"{task.prompt}\n\n"
+        f"You have NO background context about this system.\n"
+        f"However, a previous reviewer has already analyzed this code. "
+        f"Their compressed summary is available below if you want to consult it "
+        f"AFTER forming your initial assessment.\n\n"
+        f"INSTRUCTION: First, write your own independent analysis. "
+        f"Then, consult the prior summary and note any additional issues or disagreements.\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.\n\n"
+        f"--- PRIOR ANALYSIS (consult after your independent review) ---\n{summary}\n--- END ---"
+    )
+
+    # Convergence
+    convergence = call_llm(
+        f"Two reviewers analyzed this code/system:\n\n"
+        f"=== Deep Session (full project context) ===\n{deep_pos}\n\n"
+        f"=== Semi-Fresh Session (formed independent view, then consulted summary) ===\n{semi_fresh_pos}\n\n"
+        f"Synthesize a final list of ALL confirmed issues. For each:\n"
+        f"1. The issue\n2. Who found it (Deep, Semi-Fresh, or Both)\n"
+        f"3. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
+    )
+
+    return (
+        f"=== Deep Position ===\n{deep_pos}\n\n"
+        f"=== Compressed Summary (available to Semi-Fresh) ===\n{summary}\n\n"
+        f"=== Semi-Fresh Position (independent first, then consulted) ===\n{semi_fresh_pos}\n\n"
+        f"=== Convergence ===\n{convergence}"
+    )
+
+
+def method_semi_fresh_selective(task: Task) -> str:
+    """Semi-Fresh (Selective): only failure/uncertainty info provided, not full findings."""
+    # Deep position
+    deep_pos = call_llm(
+        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
+
+    # Extract only failures/uncertainties
+    failure_digest = _compress_failures_only(deep_pos)
+
+    # Semi-Fresh session: receives only what the Deep session was uncertain about
+    semi_fresh_pos = call_llm(
+        f"{task.prompt}\n\n"
+        f"You have NO background context about this system.\n"
+        f"A previous reviewer flagged these areas of uncertainty:\n\n"
+        f"--- AREAS OF UNCERTAINTY ---\n{failure_digest}\n--- END ---\n\n"
+        f"Use this as a starting point, but perform your own comprehensive review.\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
+
+    # Convergence
+    convergence = call_llm(
+        f"Two reviewers analyzed this code/system:\n\n"
+        f"=== Deep Session (full project context) ===\n{deep_pos}\n\n"
+        f"=== Semi-Fresh Session (received only uncertainty areas) ===\n{semi_fresh_pos}\n\n"
+        f"Synthesize a final list of ALL confirmed issues. For each:\n"
+        f"1. The issue\n2. Who found it (Deep, Semi-Fresh, or Both)\n"
+        f"3. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
+    )
+
+    return (
+        f"=== Deep Position ===\n{deep_pos}\n\n"
+        f"=== Failure Digest (given to Semi-Fresh) ===\n{failure_digest}\n\n"
+        f"=== Semi-Fresh Position ===\n{semi_fresh_pos}\n\n"
+        f"=== Convergence ===\n{convergence}"
+    )
+
+
 def method_ploidy(task: Task) -> str:
     """Treatment: Ploidy — asymmetric context structured debate."""
     # POSITION phase
@@ -493,6 +676,10 @@ METHODS = {
     "ccr": ("CCR (Unidirectional)", method_ccr),
     "symmetric": ("Symmetric Debate", method_symmetric_debate),
     "ploidy": ("Ploidy (Asymmetric)", method_ploidy),
+    "self_consistency": ("Self-Consistency (5-vote)", method_self_consistency),
+    "sf_passive": ("Semi-Fresh (Passive)", method_semi_fresh_passive),
+    "sf_active": ("Semi-Fresh (Active)", method_semi_fresh_active),
+    "sf_selective": ("Semi-Fresh (Selective)", method_semi_fresh_selective),
 }
 
 
