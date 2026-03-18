@@ -6,7 +6,7 @@ Evaluates context-asymmetric debate across the Context Asymmetry Spectrum.
 Uses `claude --print` CLI (no API key needed, uses Max/Pro subscription).
 Each call = fresh session = perfect context isolation.
 
-Methods (9):
+Methods (11):
   single          - Single session, full context
   second_opinion  - Two independent sessions, concatenated
   ccr             - CCR: deep produces, fresh reviews
@@ -16,11 +16,19 @@ Methods (9):
   sf_passive      - Semi-Fresh (Passive): compressed summary in prompt
   sf_active       - Semi-Fresh (Active): summary available, must retrieve after independent analysis
   sf_selective    - Semi-Fresh (Selective): only failure/uncertainty info provided
+  sf_passive_indep - Ablation: passive + independent-first instruction
+  sf_passive_bottom - Ablation: passive with summary at bottom
+
+Experimental Variables:
+  --effort         Effort level (low/medium/high/max) — controls LLM reasoning depth
+  --model          Model identifier
+  --long           Use long-context tasks with anchoring biases
 
 Usage:
     python experiments/run_experiment.py
-    python experiments/run_experiment.py --tasks 0,1,2 --methods ploidy,single,sf_passive
-    python experiments/run_experiment.py --long --methods single,ploidy,sf_passive,sf_active,sf_selective
+    python experiments/run_experiment.py --tasks 0,1,2 --methods ploidy,single
+    python experiments/run_experiment.py --long --effort high --methods single,ploidy,sf_active
+    python experiments/run_experiment.py --long --effort-sweep   # Run all effort levels
 """
 
 import argparse
@@ -33,21 +41,38 @@ from pathlib import Path
 
 MODEL = "claude-opus-4-6"
 JUDGE_MODEL = "claude-opus-4-6"
+EFFORT = "high"  # default effort level
+
+# Valid effort levels for Claude Code
+EFFORT_LEVELS = ["low", "medium", "high", "max"]
 
 
 # ─── LLM Call via claude CLI ─────────────────────────────────────────────────
 
 
-def call_llm(prompt: str, model: str = None) -> str:
-    """Call claude CLI --print. Each call = fresh session."""
-    cmd = ["claude", "--print", "--model", model or MODEL, prompt]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+def call_llm(prompt: str, model: str = None, effort: str = None) -> str:
+    """Call claude CLI --print. Each call = fresh session.
+
+    Args:
+        prompt: The prompt to send.
+        model: Model override.
+        effort: Effort level (low/medium/high/max). Controls reasoning depth.
+
+    Returns:
+        The model's response text.
+    """
+    cmd = ["claude", "--print", "--model", model or MODEL]
+    eff = effort or EFFORT
+    if eff and eff != "high":  # high is default, only pass if different
+        cmd.extend(["--effort", eff])
+    cmd.append(prompt)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
     return result.stdout.strip()
 
 
-def call_llm_multi_turn(turns: list[dict], model: str = None) -> str:
+def call_llm_multi_turn(turns: list[dict], model: str = None, effort: str = None) -> str:
     """Simulate multi-turn by concatenating into single prompt.
     claude --print doesn't support multi-turn, so we format it explicitly."""
     parts = []
@@ -57,7 +82,7 @@ def call_llm_multi_turn(turns: list[dict], model: str = None) -> str:
         elif turn["role"] == "assistant":
             parts.append(f"[PREVIOUS ASSISTANT RESPONSE]\n{turn['content']}")
     parts.append("\n[NOW RESPOND TO THE LATEST USER MESSAGE ABOVE]")
-    return call_llm("\n\n".join(parts), model)
+    return call_llm("\n\n".join(parts), model, effort)
 
 
 # ─── Tasks ───────────────────────────────────────────────────────────────────
@@ -776,12 +801,20 @@ METHODS = {
 }
 
 
-def run_experiment(task_ids=None, method_ids=None):
+def run_experiment(task_ids=None, method_ids=None, effort: str = None):
+    """Run experiments across tasks and methods.
+
+    Args:
+        task_ids: Specific task indices to run (None = all).
+        method_ids: Specific method keys to run (None = all).
+        effort: Effort level override for this run.
+    """
     tasks = TASKS if task_ids is None else [TASKS[i] for i in task_ids]
     methods = METHODS if method_ids is None else {k: METHODS[k] for k in method_ids}
+    eff = effort or EFFORT
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = Path(__file__).parent / "results" / timestamp
+    results_dir = Path(__file__).parent / "results" / f"{timestamp}_effort-{eff}"
     results_dir.mkdir(parents=True, exist_ok=True)
 
     all_results = []
@@ -790,10 +823,11 @@ def run_experiment(task_ids=None, method_ids=None):
         print(f"\n{'=' * 60}")
         print(f"Task: {task.name} ({task.id})")
         print(f"Ground truth: {len(task.ground_truth)} known issues")
+        print(f"Effort: {eff}")
         print(f"{'=' * 60}")
 
         for method_id, (method_name, method_fn) in methods.items():
-            print(f"\n  [{method_name}] running...", end=" ", flush=True)
+            print(f"\n  [{method_name}] running (effort={eff})...", end=" ", flush=True)
             t0 = time.time()
 
             try:
@@ -827,6 +861,8 @@ def run_experiment(task_ids=None, method_ids=None):
                     "task_name": task.name,
                     "method": method_id,
                     "method_name": method_name,
+                    "effort": eff,
+                    "model": MODEL,
                     "found": found,
                     "partial": partial,
                     "missed": missed,
@@ -849,21 +885,26 @@ def run_experiment(task_ids=None, method_ids=None):
             except Exception as e:
                 elapsed = time.time() - t0
                 print(f"ERROR ({elapsed:.0f}s): {e}")
-                all_results.append({"task_id": task.id, "method": method_id, "error": str(e)})
+                all_results.append(
+                    {"task_id": task.id, "method": method_id, "effort": eff, "error": str(e)}
+                )
 
     # Summary
     with open(results_dir / "summary.json", "w") as f:
         json.dump(all_results, f, indent=2, ensure_ascii=False)
 
     print(f"\n\n{'=' * 80}")
-    print("RESULTS")
+    print(f"RESULTS (effort={eff})")
     print(f"{'=' * 80}")
-    print(f"{'Task':<32} {'Method':<22} {'Found':>5} {'Part':>5} {'Miss':>5} {'F1':>7}")
+    print(
+        f"{'Task':<32} {'Method':<22} {'Found':>5} {'Part':>5} {'Miss':>5} {'F1':>7}"
+    )
     print("-" * 80)
     for r in all_results:
         if "error" not in r:
             print(
-                f"{r['task_name']:<32} {r['method_name']:<22} {r['found']:>5} {r['partial']:>5} {r['missed']:>5} {r['f1']:>7.3f}"
+                f"{r['task_name']:<32} {r['method_name']:<22} "
+                f"{r['found']:>5} {r['partial']:>5} {r['missed']:>5} {r['f1']:>7.3f}"
             )
 
     print(f"\n{'=' * 80}")
@@ -879,16 +920,104 @@ def run_experiment(task_ids=None, method_ids=None):
             print(f"  {mname:<28} F1={af1:.3f}  Found={af:.1f}/{at:.1f}  Avg={asec:.0f}s")
 
     print(f"\nSaved: {results_dir}")
+    return all_results
+
+
+def run_effort_sweep(task_ids=None, method_ids=None, efforts=None):
+    """Run experiments across all effort levels for factorial analysis.
+
+    Runs each method at each effort level to measure effort x method interaction.
+    This tests the hypothesis that effort level is a confounding variable in
+    context-asymmetric debate.
+
+    Args:
+        task_ids: Specific task indices to run.
+        method_ids: Specific method keys to run.
+        efforts: Effort levels to sweep (default: all 4).
+
+    Returns:
+        Aggregated results across all effort levels.
+    """
+    global EFFORT
+    sweep_efforts = efforts or EFFORT_LEVELS
+    all_sweep_results = []
+
+    print(f"\n{'#' * 80}")
+    print(f"EFFORT SWEEP: {sweep_efforts}")
+    print(f"{'#' * 80}")
+
+    for eff in sweep_efforts:
+        EFFORT = eff
+        print(f"\n\n{'*' * 80}")
+        print(f"  EFFORT LEVEL: {eff.upper()}")
+        print(f"{'*' * 80}")
+
+        results = run_experiment(task_ids, method_ids, effort=eff)
+        for r in results:
+            r["effort"] = eff
+        all_sweep_results.extend(results)
+
+    # Cross-effort summary
+    print(f"\n\n{'#' * 80}")
+    print("EFFORT SWEEP SUMMARY")
+    print(f"{'#' * 80}")
+    print(f"{'Effort':<10} {'Method':<22} {'Avg F1':>8} {'Avg Recall':>12} {'Avg Time':>10}")
+    print("-" * 70)
+
+    methods = METHODS if method_ids is None else {k: METHODS[k] for k in method_ids}
+    for eff in sweep_efforts:
+        for mid, (mname, _) in methods.items():
+            mrs = [
+                r
+                for r in all_sweep_results
+                if r.get("method") == mid and r.get("effort") == eff and "error" not in r
+            ]
+            if mrs:
+                af1 = sum(r["f1"] for r in mrs) / len(mrs)
+                af = sum(r["found"] for r in mrs) / len(mrs)
+                at = sum(r["total_gt"] for r in mrs) / len(mrs)
+                asec = sum(r["elapsed_seconds"] for r in mrs) / len(mrs)
+                print(
+                    f"  {eff:<8} {mname:<22} {af1:>8.3f} {af:>5.1f}/{at:.1f} {asec:>8.0f}s"
+                )
+
+    # Save sweep results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    sweep_dir = Path(__file__).parent / "results" / f"{timestamp}_effort-sweep"
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    with open(sweep_dir / "sweep_summary.json", "w") as f:
+        json.dump(all_sweep_results, f, indent=2, ensure_ascii=False)
+    print(f"\nSweep saved: {sweep_dir}")
+
+    return all_sweep_results
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--tasks", type=str, help="e.g., 0,1,2")
-    parser.add_argument("--methods", type=str, help="e.g., ploidy,single")
-    parser.add_argument("--model", type=str, default=MODEL)
+    parser = argparse.ArgumentParser(description="Ploidy Experiment Runner")
+    parser.add_argument("--tasks", type=str, help="Task indices, e.g., 0,1,2")
+    parser.add_argument("--methods", type=str, help="Method keys, e.g., ploidy,single")
+    parser.add_argument("--model", type=str, default=MODEL, help="Model identifier")
     parser.add_argument("--long", action="store_true", help="Use long-context tasks")
+    parser.add_argument(
+        "--effort",
+        type=str,
+        default="high",
+        choices=EFFORT_LEVELS,
+        help="Effort level (low/medium/high/max)",
+    )
+    parser.add_argument(
+        "--effort-sweep",
+        action="store_true",
+        help="Run all effort levels for factorial analysis",
+    )
+    parser.add_argument(
+        "--efforts",
+        type=str,
+        help="Specific effort levels for sweep, e.g., low,high,max",
+    )
     args = parser.parse_args()
     MODEL = args.model
+    EFFORT = args.effort
 
     if args.long:
         from tasks_longcontext import LONG_CONTEXT_TASKS
@@ -896,7 +1025,11 @@ if __name__ == "__main__":
         TASKS.clear()
         TASKS.extend(LONG_CONTEXT_TASKS)
 
-    run_experiment(
-        [int(x) for x in args.tasks.split(",")] if args.tasks else None,
-        args.methods.split(",") if args.methods else None,
-    )
+    task_ids = [int(x) for x in args.tasks.split(",")] if args.tasks else None
+    method_ids = args.methods.split(",") if args.methods else None
+
+    if args.effort_sweep:
+        sweep_efforts = args.efforts.split(",") if args.efforts else None
+        run_effort_sweep(task_ids, method_ids, sweep_efforts)
+    else:
+        run_experiment(task_ids, method_ids)

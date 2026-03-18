@@ -50,7 +50,7 @@
 
 % Title
 \title{Ploidy: Context-Asymmetric Structured Debate\\for LLM Decision Verification}
-\author{Anonymous}
+\author{heznpc}
 \date{}
 
 \begin{document}
@@ -285,7 +285,16 @@ The server maintains debate state in SQLite (WAL mode) and enforces the phase pr
 \label{sec:implementation}
 % ============================================================
 
-Ploidy is implemented as a Python MCP server (FastMCP, asyncio, aiosqlite) exposing 9 tools over Streamable HTTP on port 8765. The server manages debate lifecycle, enforces phase transitions via a finite state machine (\textsc{independent} $\to$ \textsc{position} $\to$ \textsc{challenge} $\to$ \textsc{convergence} $\to$ \textsc{complete}), and persists all state in SQLite with WAL mode for crash recovery. Per-debate asyncio locks guard concurrent phase transitions.
+Ploidy is implemented as a Python MCP server (FastMCP, asyncio, aiosqlite) exposing 10 tools over Streamable HTTP on port 8765. The server manages debate lifecycle, enforces phase transitions via a finite state machine (\textsc{independent} $\to$ \textsc{position} $\to$ \textsc{challenge} $\to$ \textsc{convergence} $\to$ \textsc{complete}), and persists all state in SQLite with WAL mode for crash recovery. Per-debate asyncio locks guard concurrent phase transitions.
+
+\paragraph{v0.2 enhancements.} The implementation now includes:
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Semi-Fresh sessions}: Native server support for sessions with compressed context, delivered passively (in-prompt) or actively (retrieval-after-independent-analysis).
+  \item \textbf{API fallback} (\texttt{debate\_auto}): Single-command debate via OpenAI-compatible API endpoints. The server auto-generates Fresh or Semi-Fresh responses, enabling single-terminal workflows. Supports any backend (Anthropic, OpenAI, Ollama, OpenRouter).
+  \item \textbf{LLM-enhanced convergence}: Optional meta-analysis that uses an LLM to explain \emph{why} sessions disagreed, attributing disagreements to specific context factors (sunk cost bias, missing domain constraints, stochastic variance, or genuine trade-offs).
+  \item \textbf{Visualization dashboard}: Read-only web interface for browsing debate history, timelines, and convergence results from the SQLite database.
+  \item \textbf{Effort level}: Configurable reasoning depth parameter that controls how much computation the model applies per response---an experimental variable that may interact with context asymmetry (\S\ref{sec:effort}).
+\end{itemize}
 
 We note that the experiments in \S\ref{sec:experiments} use the \texttt{claude --print} CLI to simulate the protocol rather than the MCP server directly, as this provides cleaner session isolation for controlled comparison. Each CLI invocation creates a guaranteed-fresh session with no shared state. The MCP server is designed for production use where two human-operated terminals connect to the same server instance.
 
@@ -324,7 +333,9 @@ We evaluate on 10 tasks across two context regimes:
 
 \paragraph{Metrics.} Recall $= (\text{found} + 0.5 \times \text{partial}) / \text{total ground truth}$. Precision and F1 are reported but include bonus findings in the denominator, which penalizes methods that produce more valid-but-unlisted findings. We flag this as a metric design issue (\S\ref{sec:why-no-help}) and recommend interpreting recall as the primary indicator of ground-truth detection.
 
-\paragraph{Limitations of this setup} (expanded in \S\ref{sec:limitations}): single run per method-task pair, author-defined ground truth without independent validation, same model family as judge, and CLI simulation rather than MCP server execution.
+\paragraph{Effort level.} Claude Code exposes an \textbf{effort} parameter (low, medium, high, max) that controls the model's reasoning depth per response. All experiments in this paper use the default \texttt{high} effort unless otherwise noted. We identify effort level as a potentially confounding variable: lower effort may reduce a session's ability to detect subtle issues, while higher effort may increase the quality of challenges. In \S\ref{sec:effort}, we describe a factorial experiment design crossing effort levels with methods to measure this interaction.
+
+\paragraph{Limitations of this setup} (expanded in \S\ref{sec:limitations}): single run per method-task pair, author-defined ground truth without independent validation, same model family as judge, CLI simulation rather than MCP server execution, and single effort level.
 
 \subsection{Results (Experiment 1: Short-Context Tasks)}
 \label{sec:exp1-results}
@@ -614,6 +625,33 @@ If Semi-Fresh-Active outperforms both Fresh and Deep, it would suggest that the 
 
 These observations are from a single run on 3 tasks and require statistical validation, but they shift the question from ``does asymmetry help?'' to ``what is the optimal point in the depth~$\times$~delivery space?''---a quantitatively richer and more practically useful direction.
 
+\subsection{Effort Level as Experimental Variable}
+\label{sec:effort}
+
+LLM inference providers increasingly expose \textbf{effort} or \textbf{thinking budget} parameters that control how much computation a model applies to each response. In Claude Code, this manifests as four levels: \texttt{low}, \texttt{medium}, \texttt{high}, and \texttt{max}. This parameter is relevant to context-asymmetric debate for three reasons:
+
+\begin{enumerate}[label=\arabic*., leftmargin=1.5em]
+  \item \textbf{Effort--asymmetry interaction}: Higher effort may allow a Deep session to reason through its biases more carefully, potentially reducing the benefit of Fresh perspective. Conversely, higher effort in a Fresh session may compensate for missing context through deeper first-principles reasoning.
+  \item \textbf{Effort as confound}: If experiments are conducted at a single effort level, observed effects may not generalize. A method that outperforms at \texttt{high} effort may underperform at \texttt{low} effort if the method's benefit depends on reasoning depth.
+  \item \textbf{Cost--quality trade-off}: Lower effort is cheaper. If asymmetric debate at \texttt{medium} effort achieves the same recall as single session at \texttt{max} effort, this has practical cost implications.
+\end{enumerate}
+
+We propose a $4 \times k$ factorial design crossing effort levels (\texttt{low}, \texttt{medium}, \texttt{high}, \texttt{max}) with $k$ selected methods (e.g., Single, Ploidy, SF-Active) on the long-context tasks. The experiment runner supports this via \texttt{--effort-sweep}:
+
+\begin{lstlisting}
+python experiments/run_experiment.py --long --effort-sweep \
+    --methods single,ploidy,sf_active
+\end{lstlisting}
+
+Key hypotheses to test:
+\begin{itemize}[leftmargin=1.5em]
+  \item $H_1$: Effort level has a main effect on recall (higher effort $\to$ higher recall).
+  \item $H_2$: There is an effort~$\times$~method interaction---context asymmetry provides greater benefit at lower effort levels, where single sessions are more susceptible to anchoring.
+  \item $H_3$: The optimal cost--quality point is asymmetric debate at medium effort, not single session at max effort.
+\end{itemize}
+
+This experiment is enabled by the v0.2 implementation but has not yet been executed. Results will appear in a future revision.
+
 \subsection{Limitations}
 \label{sec:limitations}
 
@@ -628,6 +666,7 @@ This pilot study has significant limitations that bound the strength of all clai
   \item \textbf{Token cost}: Ploidy uses approximately 5$\times$ the tokens of Single Session. Self-Consistency (5-vote) was included as a budget-equivalent baseline and achieves the same 100\% recall as SF-Active on long-context tasks. The practical advantage of structured debate over Self-Consistency is the typed audit trail and convergence analysis, not recall improvement---a distinction that may or may not justify the added protocol complexity.
   \item \textbf{CLI simulation vs.\ MCP server}: Experiments use \texttt{claude --print} CLI rather than the Ploidy MCP server. While this provides cleaner session isolation, the convergence engine's rule-based classification (in the server) is not exercised in the experiments.
   \item \textbf{Metric design}: The current F1 formulation penalizes valid bonus findings as false positives. This systematically disadvantages more thorough methods and should be revised in future work.
+  \item \textbf{Single effort level}: All experiments use the default \texttt{high} effort setting. Results may differ at other effort levels, and effort--method interactions are unmeasured (\S\ref{sec:effort}).
 \end{itemize}
 
 \subsection{Broader Implications}
@@ -654,13 +693,15 @@ These results shift the question from ``does asymmetry help?'' to ``what is the 
 
 \paragraph{Future work priorities:}
 \begin{enumerate}[label=\arabic*., leftmargin=1.5em]
-  \item \textbf{Semi-Fresh variants}: implement and evaluate Semi-Fresh-Passive, Semi-Fresh-Active, and Semi-Fresh-Selective to map the depth $\times$ delivery space
-  \item \textbf{Context delivery mode isolation}: compare identical information delivered passively (in-prompt) vs.\ actively (tool call) to test whether delivery mode has an independent effect on entrenchment
+  \item \textbf{Effort level sweep}: Execute the $4 \times k$ factorial experiment (\S\ref{sec:effort}) to measure effort--asymmetry interaction and identify cost-optimal configurations
+  \item \textbf{N-ary session topology}: Extend beyond binary (Deep/Fresh) to three-party debates with intermediate context levels (Deep + Semi-Fresh + Fresh), testing whether partial context sessions produce novel insights absent from both extremes
+  \item \textbf{LLM-enhanced convergence validation}: Evaluate whether the meta-analyst's root cause attribution (context anchoring vs.\ missing constraints vs.\ genuine trade-off) aligns with human expert judgment
   \item \textbf{Statistical validation}: 30+ tasks, 5+ runs per method, paired statistical tests (Wilcoxon signed-rank, bootstrap CI)
   \item \textbf{Context-length gradient}: systematic evaluation at 100, 500, 1K, 5K, 10K tokens to identify the entrenchment threshold
   \item \textbf{Cross-model evaluation}: weaker models (where single-session recall is lower) and cross-model judges
   \item \textbf{External task sets}: real-world architecture decisions from open-source projects to address circular task design concerns
   \item \textbf{Multi-round protocol}: extending the single-round \textsc{challenge} phase to test whether AceMAD's submartingale conditions can be satisfied
+  \item \textbf{Production validation}: Compare MCP server debate (\texttt{debate\_auto}) outcomes with CLI simulation to validate that the server protocol produces equivalent results
 \end{enumerate}
 
 We release Ploidy as an open-source MCP server at \url{https://github.com/heznpc/ploidy}.

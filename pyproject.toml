@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ploidy"
-version = "0.1.0"
+version = "0.2.0"
 description = "Cross-session multi-agent debate MCP server. Same model, different context depths, better decisions."
 readme = "README.md"
 license = "MIT"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["mcp", "multi-agent", "debate", "llm", "context-asymmetry"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -29,8 +29,16 @@ dependencies = [
 
 [project.scripts]
 ploidy = "ploidy.server:main"
+ploidy-dashboard = "ploidy.dashboard:main"
 
 [project.optional-dependencies]
+api = [
+    "openai>=1.0",
+]
+dashboard = [
+    "uvicorn>=0.30",
+    "aiosqlite>=0.20,<1",
+]
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -39,6 +47,9 @@ dev = [
 docs = [
     "mkdocs-material",
     "mkdocs-minify-plugin",
+]
+all = [
+    "ploidy[api,dashboard,dev,docs]",
 ]
 
 [tool.ruff]
