@@ -80,8 +80,6 @@ LLM outputs are stochastic. The same model, given the same prompt, produces diff
 
 The result: identical models, identical prompts, identical users---but different project outcomes depending on which stochastic sample landed first. Jacob et al.~\citep{jacob2025chatchamber} term this the ``Chat-Chamber Effect''---the tendency for users to trust and build upon whatever stochastic output a single session produces. This is not addressable by temperature tuning or prompt engineering; empirical evidence shows prompt-based mitigations (chain-of-thought, reflection, ``ignore your prior response'') have no statistically significant effect on anchoring bias~\citep{feng2026anchoring}.
 
-This phenomenon has a well-documented human analog: accumulated expertise simultaneously enables domain mastery and prevents paradigm revision---a dynamic observed across scientific communities~\citep{kuhn1962structure}, empirically confirmed in studies of eminent scientists' influence on field renewal~\citep{azoulay2019funeral}, and formalized as a structural property of generational turnover. We explore this parallel in depth in a companion paper; here, we note only that the LLM single-session problem is structurally similar---context accumulation creates anchoring that prompt-based interventions cannot overcome~\citep{feng2026anchoring}.
-
 The practical consequence is stark: given the same model and the same prompt, different sessions may produce fundamentally different assessments---agree, disagree, or equivocate---on the same hypothesis. A user confined to a single session is unknowingly subject to a stochastic lottery whose outcome determines not just the quality of individual responses, but whether entire tasks succeed or fail. Two users with identical models and identical problems may experience dramatically different ``model performance'' based solely on which stochastic sample anchored their session.
 
 The only computational intervention with empirical support for this problem is physical session separation. Cross-Context Review (CCR)~\citep{song2026ccr} demonstrated that a fresh session reviewing an artifact produced by a deep session achieves F1=28.6\% on error detection versus 24.6\% for same-session review ($p=0.008$). However, CCR is unidirectional---the fresh session reviews but does not debate.
@@ -907,8 +905,6 @@ This pilot study has significant limitations that bound the strength of all clai
 
 \subsection{Broader Implications}
 \label{sec:implications}
-
-The stochastic prior lock-in problem is not unique to LLMs---it mirrors well-documented phenomena in human organizations where accumulated context simultaneously enables domain mastery and prevents paradigm revision~\citep{kuhn1962structure, azoulay2019funeral}. A companion paper formalizes this structural isomorphism between LLM context windows and human generational dynamics, including the connection to model collapse~\citep{shumailov2024collapse} as the failure mode when generational context asymmetry is absent.
 
 For multi-agent system design, our preliminary results suggest a practical principle: \textbf{context diversity may be more valuable than agent count}. Combined with Choi et al.'s martingale result~\citep{choi2025debate} (scaling homogeneous agents cannot improve expected correctness) and Boca et al.'s finding~\citep{boca2025emergent} that LLM populations spontaneously develop collective biases, this motivates architectures that deliberately maintain sessions with different context depths rather than scaling identical agents.
 
