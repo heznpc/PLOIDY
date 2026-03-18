@@ -652,6 +652,35 @@ Key hypotheses to test:
 
 This experiment is enabled by the v0.2 implementation but has not yet been executed. Results will appear in a future revision.
 
+\subsection{Linguistic Framing as Experimental Variable}
+\label{sec:language}
+
+When LLMs generate responses localized for different languages, the social and cultural context injected into the language may distort the \emph{substance} of technical findings. This is a form of information loss distinct from context anchoring but potentially compounding it.
+
+We identify three mechanisms by which linguistic framing may threaten information fidelity:
+
+\begin{enumerate}[label=\arabic*., leftmargin=1.5em]
+  \item \textbf{Euphemization}: Languages with strong politeness norms (Korean, Japanese) may soften critical findings. ``This code has a critical SQL injection vulnerability'' becomes ``There may be room for improvement in input handling''---the severity signal is lost.
+  \item \textbf{Hierarchical suppression}: In languages with grammatical honorifics (Korean's \emph{jondaenmal}/\emph{banmal}, Japanese's \emph{keigo}), challenges to established positions may be linguistically weakened. A Fresh session challenging a Deep session's position may unconsciously soften its critique when generating in Korean, reducing the effectiveness of the adversarial signal.
+  \item \textbf{Technical term dilution}: When technical terms are translated rather than preserved (e.g., ``race condition'' $\to$ ``경쟁 상태''), the precision of the finding may decrease, and the judge may have difficulty matching translated findings to English-language ground truth.
+\end{enumerate}
+
+This extends the Context Asymmetry Spectrum to a \textbf{third dimension}: depth $\times$ delivery mode $\times$ linguistic framing. We propose a language sweep experiment:
+
+\begin{lstlisting}
+python experiments/run_experiment.py --long --lang-sweep \
+    --methods single,ploidy --langs en,ko,ja,zh
+\end{lstlisting}
+
+Key hypotheses:
+\begin{itemize}[leftmargin=1.5em]
+  \item $H_1$: Localized responses achieve lower recall on English-language ground truth due to euphemization and term dilution.
+  \item $H_2$: The recall gap between languages is larger for Fresh sessions (which lack context to anchor technical vocabulary) than Deep sessions.
+  \item $H_3$: Context asymmetry may \emph{partially compensate} for localization loss---if the Fresh session in language $L$ misses an issue due to euphemization, the Deep session (with stronger technical framing from project context) may catch it during the challenge phase.
+\end{itemize}
+
+This experiment is enabled but not yet executed. If $H_2$ is confirmed, it would imply that multi-agent systems operating across languages need language-aware context injection strategies---a finding with implications for global deployment of AI verification tools.
+
 \subsection{Limitations}
 \label{sec:limitations}
 
@@ -667,6 +696,7 @@ This pilot study has significant limitations that bound the strength of all clai
   \item \textbf{CLI simulation vs.\ MCP server}: Experiments use \texttt{claude --print} CLI rather than the Ploidy MCP server. While this provides cleaner session isolation, the convergence engine's rule-based classification (in the server) is not exercised in the experiments.
   \item \textbf{Metric design}: The current F1 formulation penalizes valid bonus findings as false positives. This systematically disadvantages more thorough methods and should be revised in future work.
   \item \textbf{Single effort level}: All experiments use the default \texttt{high} effort setting. Results may differ at other effort levels, and effort--method interactions are unmeasured (\S\ref{sec:effort}).
+  \item \textbf{English-only evaluation}: All experiments and ground truth are in English. Localized responses in other languages may exhibit different anchoring dynamics and information loss patterns (\S\ref{sec:language}).
 \end{itemize}
 
 \subsection{Broader Implications}
@@ -702,6 +732,7 @@ These results shift the question from ``does asymmetry help?'' to ``what is the 
   \item \textbf{External task sets}: real-world architecture decisions from open-source projects to address circular task design concerns
   \item \textbf{Multi-round protocol}: extending the single-round \textsc{challenge} phase to test whether AceMAD's submartingale conditions can be satisfied
   \item \textbf{Production validation}: Compare MCP server debate (\texttt{debate\_auto}) outcomes with CLI simulation to validate that the server protocol produces equivalent results
+  \item \textbf{Cross-linguistic evaluation}: Measure information loss from linguistic framing across languages (English, Korean, Japanese, Chinese) and test whether context asymmetry compensates for localization-induced euphemization (\S\ref{sec:language})
 \end{enumerate}
 
 We release Ploidy as an open-source MCP server at \url{https://github.com/heznpc/ploidy}.

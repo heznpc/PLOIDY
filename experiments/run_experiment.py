@@ -42,25 +42,39 @@ from pathlib import Path
 MODEL = "claude-opus-4-6"
 JUDGE_MODEL = "claude-opus-4-6"
 EFFORT = "high"  # default effort level
+LANGUAGE = "en"  # default output language
 
 # Valid effort levels for Claude Code
 EFFORT_LEVELS = ["low", "medium", "high", "max"]
+
+# Languages for localization variable testing
+LANGUAGES = {
+    "en": "Respond in English.",
+    "ko": "한국어로 답변하세요. 기술적 용어는 가능한 한 한국어로 번역하세요.",
+    "ja": "日本語で回答してください。技術用語はできる限り日本語に翻訳してください。",
+    "zh": "请用中文回答。尽可能将技术术语翻译成中文。",
+}
 
 
 # ─── LLM Call via claude CLI ─────────────────────────────────────────────────
 
 
-def call_llm(prompt: str, model: str = None, effort: str = None) -> str:
+def call_llm(prompt: str, model: str = None, effort: str = None, lang: str = None) -> str:
     """Call claude CLI --print. Each call = fresh session.
 
     Args:
         prompt: The prompt to send.
         model: Model override.
         effort: Effort level (low/medium/high/max). Controls reasoning depth.
+        lang: Language code for localization (en/ko/ja/zh). Appends language instruction.
 
     Returns:
         The model's response text.
     """
+    actual_lang = lang or LANGUAGE
+    if actual_lang != "en" and actual_lang in LANGUAGES:
+        prompt = f"{prompt}\n\n{LANGUAGES[actual_lang]}"
+
     cmd = ["claude", "--print", "--model", model or MODEL]
     eff = effort or EFFORT
     if eff and eff != "high":  # high is default, only pass if different
@@ -801,20 +815,22 @@ METHODS = {
 }
 
 
-def run_experiment(task_ids=None, method_ids=None, effort: str = None):
+def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str = None):
     """Run experiments across tasks and methods.
 
     Args:
         task_ids: Specific task indices to run (None = all).
         method_ids: Specific method keys to run (None = all).
         effort: Effort level override for this run.
+        lang: Language code for localization (en/ko/ja/zh).
     """
     tasks = TASKS if task_ids is None else [TASKS[i] for i in task_ids]
     methods = METHODS if method_ids is None else {k: METHODS[k] for k in method_ids}
     eff = effort or EFFORT
+    actual_lang = lang or LANGUAGE
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = Path(__file__).parent / "results" / f"{timestamp}_effort-{eff}"
+    results_dir = Path(__file__).parent / "results" / f"{timestamp}_effort-{eff}_lang-{actual_lang}"
     results_dir.mkdir(parents=True, exist_ok=True)
 
     all_results = []
@@ -823,7 +839,7 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None):
         print(f"\n{'=' * 60}")
         print(f"Task: {task.name} ({task.id})")
         print(f"Ground truth: {len(task.ground_truth)} known issues")
-        print(f"Effort: {eff}")
+        print(f"Effort: {eff} | Language: {actual_lang}")
         print(f"{'=' * 60}")
 
         for method_id, (method_name, method_fn) in methods.items():
@@ -862,6 +878,7 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None):
                     "method": method_id,
                     "method_name": method_name,
                     "effort": eff,
+                    "language": actual_lang,
                     "model": MODEL,
                     "found": found,
                     "partial": partial,
@@ -992,6 +1009,88 @@ def run_effort_sweep(task_ids=None, method_ids=None, efforts=None):
     return all_sweep_results
 
 
+def run_language_sweep(task_ids=None, method_ids=None, languages=None):
+    """Run experiments across languages for localization analysis.
+
+    Tests whether linguistic framing affects information quality.
+    When LLMs localize responses to feel natural in different languages,
+    social/cultural context injection may distort technical findings.
+
+    Hypotheses:
+    - H1: Localized responses may euphemize or soften critical findings
+    - H2: Hierarchical language norms (e.g., Korean keigo) may suppress
+           challenges to established positions
+    - H3: The information loss from localization interacts with context
+           asymmetry — Fresh sessions may be more affected because they
+           lack context to anchor technical terms
+
+    Args:
+        task_ids: Specific task indices to run.
+        method_ids: Specific method keys to run.
+        languages: Language codes to sweep (default: all).
+
+    Returns:
+        Aggregated results across all languages.
+    """
+    global LANGUAGE
+    sweep_langs = languages or list(LANGUAGES.keys())
+    all_lang_results = []
+
+    print(f"\n{'#' * 80}")
+    print(f"LANGUAGE SWEEP: {sweep_langs}")
+    print(f"{'#' * 80}")
+
+    for lang_code in sweep_langs:
+        LANGUAGE = lang_code
+        print(f"\n\n{'*' * 80}")
+        print(f"  LANGUAGE: {lang_code.upper()} — {LANGUAGES.get(lang_code, 'English')}")
+        print(f"{'*' * 80}")
+
+        results = run_experiment(task_ids, method_ids, lang=lang_code)
+        for r in results:
+            r["language"] = lang_code
+        all_lang_results.extend(results)
+
+    # Cross-language summary
+    print(f"\n\n{'#' * 80}")
+    print("LANGUAGE SWEEP SUMMARY")
+    print(f"{'#' * 80}")
+    print(
+        f"{'Lang':<6} {'Method':<22} {'Avg F1':>8} {'Avg Recall':>12} {'Avg Time':>10}"
+    )
+    print("-" * 70)
+
+    methods = METHODS if method_ids is None else {k: METHODS[k] for k in method_ids}
+    for lang_code in sweep_langs:
+        for mid, (mname, _) in methods.items():
+            mrs = [
+                r
+                for r in all_lang_results
+                if r.get("method") == mid
+                and r.get("language") == lang_code
+                and "error" not in r
+            ]
+            if mrs:
+                af1 = sum(r["f1"] for r in mrs) / len(mrs)
+                af = sum(r["found"] for r in mrs) / len(mrs)
+                at = sum(r["total_gt"] for r in mrs) / len(mrs)
+                asec = sum(r["elapsed_seconds"] for r in mrs) / len(mrs)
+                print(
+                    f"  {lang_code:<4} {mname:<22} {af1:>8.3f} "
+                    f"{af:>5.1f}/{at:.1f} {asec:>8.0f}s"
+                )
+
+    # Save sweep results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    sweep_dir = Path(__file__).parent / "results" / f"{timestamp}_lang-sweep"
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    with open(sweep_dir / "lang_sweep_summary.json", "w") as f:
+        json.dump(all_lang_results, f, indent=2, ensure_ascii=False)
+    print(f"\nLang sweep saved: {sweep_dir}")
+
+    return all_lang_results
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ploidy Experiment Runner")
     parser.add_argument("--tasks", type=str, help="Task indices, e.g., 0,1,2")
@@ -1015,9 +1114,26 @@ if __name__ == "__main__":
         type=str,
         help="Specific effort levels for sweep, e.g., low,high,max",
     )
+    parser.add_argument(
+        "--lang",
+        type=str,
+        default="en",
+        help="Output language (en/ko/ja/zh)",
+    )
+    parser.add_argument(
+        "--lang-sweep",
+        action="store_true",
+        help="Run all languages for localization analysis",
+    )
+    parser.add_argument(
+        "--langs",
+        type=str,
+        help="Specific languages for sweep, e.g., en,ko,ja",
+    )
     args = parser.parse_args()
     MODEL = args.model
     EFFORT = args.effort
+    LANGUAGE = args.lang
 
     if args.long:
         from tasks_longcontext import LONG_CONTEXT_TASKS
@@ -1031,5 +1147,8 @@ if __name__ == "__main__":
     if args.effort_sweep:
         sweep_efforts = args.efforts.split(",") if args.efforts else None
         run_effort_sweep(task_ids, method_ids, sweep_efforts)
+    elif args.lang_sweep:
+        sweep_langs = args.langs.split(",") if args.langs else None
+        run_language_sweep(task_ids, method_ids, sweep_langs)
     else:
         run_experiment(task_ids, method_ids)
