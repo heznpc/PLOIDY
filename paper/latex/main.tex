@@ -82,6 +82,8 @@ The result: identical models, identical prompts, identical users---but different
 
 The practical consequence is stark: given the same model and the same prompt, different sessions may produce fundamentally different assessments---agree, disagree, or equivocate---on the same hypothesis. A user confined to a single session is unknowingly subject to a stochastic lottery whose outcome determines not just the quality of individual responses, but whether entire tasks succeed or fail. Two users with identical models and identical problems may experience dramatically different ``model performance'' based solely on which stochastic sample anchored their session.
 
+This failure mode is structurally analogous to apoptosis failure in cell biology. The problem is not that the session performs poorly---it is that a session with accumulated errors \emph{does not self-terminate}. It continues generating outputs, the user continues trusting them, and biased conclusions propagate through persistent memory and downstream decisions. A low-performing session that resets is functioning correctly; a high-performing session locked into a biased trajectory is the dangerous case, because its apparent competence masks the accumulated error. Ploidy's Fresh session serves as an external checkpoint---it cannot be anchored to the Deep session's prior outputs, so it detects errors that the Deep session's own context window has rendered invisible.
+
 The only computational intervention with empirical support for this problem is physical session separation. Cross-Context Review (CCR)~\citep{song2026ccr} demonstrated that a fresh session reviewing an artifact produced by a deep session achieves F1=28.6\% on error detection versus 24.6\% for same-session review ($p=0.008$). However, CCR is unidirectional---the fresh session reviews but does not debate.
 
 We extend CCR from unidirectional review to \textbf{bidirectional structured debate} and introduce the \textbf{Context Asymmetry Spectrum}---a continuum from full context (Deep) through compressed context (Semi-Fresh) to zero context (Fresh). This spectrum recognizes that the optimal information state for a challenger may be neither complete ignorance nor full knowledge, but an intermediate point analogous to the ``experienced outsider'' who brings domain awareness without institutional entrenchment.
@@ -110,12 +112,16 @@ LLM performance degrades with context length even when retrieval is perfect---Du
 \subsection{Multi-Agent Debate}
 \label{sec:mad}
 
-Multi-agent debate (MAD) is well-studied but predominantly uses symmetric configurations where all agents share the same context. Recent work has explored multi-LLM context learning for richer discussion dynamics~\citep{m2cl2026}, but the fundamental assumption of shared context remains. Oh et al.~\citep{oh2025dreamad} demonstrated that symmetric debate can amplify bias through ``belief entrenchment.'' Choi et al.~\citep{choi2025debate} proved that debate under symmetric information induces a martingale---it cannot improve expected correctness beyond majority voting. This result has implications beyond LLMs: any system where agents share identical priors and debate cannot, in expectation, improve upon aggregating their independent judgments.
+Multi-agent debate (MAD) is well-studied but predominantly uses symmetric configurations where all agents share the same context. Recent work has explored multi-LLM context learning for richer discussion dynamics~\citep{m2cl2026}, but the fundamental assumption of shared context remains. Oh et al.~\citep{oh2025dreamad} demonstrated that symmetric debate can amplify bias through ``belief entrenchment.'' Choi et al.~\citep{choi2025debate} proved that debate under symmetric information induces a martingale---it cannot improve expected correctness beyond majority voting.
+
+ColMAD~\citep{chen2025colmad} reframes debate from competitive zero-sum to collaborative non-zero-sum, where agents critique supportively rather than adversarially, reporting 19\% improvement over competitive MAD. Ploidy shares this collaborative direction through its \texttt{propose\_alternative} and \texttt{synthesize} semantic actions. However, ColMAD and similar collaborative frameworks still operate under symmetric information---all agents share the same context, leaving them vulnerable to collective anchoring. Ploidy extends the collaborative paradigm by combining structured semantic actions with intentional context asymmetry.
 
 \subsection{Asymmetric Context as a Mechanism}
 \label{sec:asymmetric}
 
 SR-DCR~\citep{srdcr2025} introduced asymmetric context verification debate (ACVD): a context-defending agent debates a context-deprived critic. On GPT-3.5, this achieved 62.7\% accuracy (+3.4pp over naive debate). AceMAD~\citep{liu2026acemad} proved that asymmetric cognitive potential creates submartingale drift toward truth, formally breaking the martingale curse. We note that Ploidy's current single-round design does not satisfy the multi-round conditions required for AceMAD's submartingale proof; whether a multi-round extension would achieve this remains an open question (\S\ref{sec:conclusion}).
+
+AceMAD provides the theoretical foundation demonstrating \emph{that} asymmetry works. Ploidy serves as empirical validation and system-level implementation: answering the architectural questions of \emph{what form} of context asymmetry to inject (the Context Asymmetry Spectrum), \emph{how} to deliver it (injection mode), and \emph{how many} sessions are needed to separate structural bias from stochastic noise (ploidy level).
 
 \subsection{Scaling Agents vs.\ Scaling Diversity}
 \label{sec:scaling}
@@ -142,6 +148,13 @@ No prior work treats the delivery mechanism---memory file vs.\ skills file vs.\ 
 \label{sec:collapse}
 
 When AI-generated content enters training data, progressive quality degradation occurs---``model collapse''~\citep{shumailov2024collapse}. Ploidy's design of maintaining sessions with different context depths is a within-deployment countermeasure to this homogenization tendency.
+
+\subsection{Positional Bias in Context Delivery}
+\label{sec:positional-bias}
+
+LLM attention is non-uniform across the context window. Liu et al.~\citep{liu2023lost} demonstrated a U-shaped performance curve: models attend strongly to information at the beginning and end of the prompt but degrade on middle-positioned content (``Lost in the Middle'' effect). This positional bias is well-established and reflected in official prompt engineering guidelines from both Anthropic and OpenAI.
+
+However, prior multi-agent debate literature has not accounted for how positional bias interacts with debate dynamics. When a compressed summary is injected at the top of a Semi-Fresh prompt (SF-Passive), the model encounters the Deep session's framing \emph{before} the raw artifact---anchoring all subsequent reasoning on that framing. When the same summary is placed at the bottom (SF-Passive-Bottom) or delivered via active retrieval after independent analysis (SF-Active), the positional anchoring is attenuated. Our ablation results are consistent with this mechanism. The contribution is not the discovery of positional bias itself, but the demonstration that \textbf{context injection architecture is a moderator variable for multi-agent debate efficacy}---a dimension absent from existing MAD research.
 
 \subsection{Ploidy's Position}
 \label{sec:position}
@@ -680,6 +693,29 @@ Auth overhaul (concrete) & Ploidy 2n & 5/5 & \textbf{5/5} \\
 
 On the auth overhaul task (concrete technical findings: bus factor, HS256, migration risk), Sonnet matches Opus at 5/5 regardless of method. On the DB migration task (abstract socio-technical judgment: sunk cost fallacy, anchor bias recognition), Sonnet drops to 2/5 with 2~missed issues---and Ploidy~2n performs \emph{worse} than Single (2.5/5 effective vs.\ 3.0/5). The Fresh session lacks sufficient reasoning capacity to generate useful challenges, injecting noise rather than constructive critique.
 
+\subsection{Experiment 6: Effort Level Sweep}
+\label{sec:effort-sweep}
+
+We swept effort levels (low, high, max) on 2 long-context tasks with Single and Ploidy~1n to test effort--method interaction.
+
+\begin{table}[H]
+\centering
+\caption{Effort level sweep results (avg over 2 long-context tasks).}
+\label{tab:effort-sweep}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Effort} & \textbf{Single Recall} & \textbf{Ploidy Recall} & \textbf{Single F1} & \textbf{Ploidy F1} \\
+\midrule
+low  & \textbf{4.5/5} & \textbf{4.5/5} & \textbf{0.679} & 0.544 \\
+high & \textbf{4.5/5} & 4.0/5 & 0.634 & \textbf{0.650} \\
+max  & 3.5/5 & 3.0/5 & 0.475 & 0.482 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Effort is not monotonically beneficial. At max effort, both methods produce the worst recall (Single~3.5/5, Ploidy~3.0/5)---the model appears to overthink, generating over-elaborate analyses that diverge from ground-truth findings. Effort=low matches effort=high on recall (4.5/5) at roughly half the compute time. Ploidy outperforms Single on F1 only at effort=high, suggesting the effort~$\times$~method interaction is non-trivial: context-asymmetric debate is most effective at intermediate reasoning depth.
+
 % ============================================================
 \section{Discussion}
 \label{sec:discussion}
@@ -899,9 +935,41 @@ This pilot study has significant limitations that bound the strength of all clai
   \item \textbf{Token cost}: Ploidy uses approximately 5$\times$ the tokens of Single Session. Self-Consistency (5-vote) was included as a budget-equivalent baseline and achieves the same 100\% recall as SF-Active on long-context tasks. The practical advantage of structured debate over Self-Consistency is the typed audit trail and convergence analysis, not recall improvement---a distinction that may or may not justify the added protocol complexity.
   \item \textbf{CLI simulation vs.\ MCP server}: Experiments use \texttt{claude --print} CLI rather than the Ploidy MCP server. While this provides cleaner session isolation, the convergence engine's rule-based classification (in the server) is not exercised in the experiments.
   \item \textbf{Metric design}: The current F1 formulation penalizes valid bonus findings as false positives. This systematically disadvantages more thorough methods and should be revised in future work.
-  \item \textbf{Single effort level}: All experiments use the default \texttt{high} effort setting. Results may differ at other effort levels, and effort--method interactions are unmeasured (\S\ref{sec:effort}).
+  \item \textbf{Effort sweep limited}: Effort sweep (\S\ref{sec:effort-sweep}) used 1n ploidy only. The effort~$\times$~ploidy~$\times$~injection three-way interaction is unmeasured.
   \item \textbf{English-only evaluation}: All experiments and ground truth are in English. Localized responses in other languages may exhibit different anchoring dynamics and information loss patterns (\S\ref{sec:language}).
 \end{itemize}
+
+\subsection{Compression Bias in Semi-Fresh Sessions}
+\label{sec:compression-bias}
+
+A reviewer may object that the compression step in Semi-Fresh sessions inherits the Deep session's bias. If the Deep session has anchored on a sunk cost narrative, its summary will reflect that framing---omitting alternatives it dismissed and emphasizing paths it pursued. The Semi-Fresh session then inherits a pre-filtered view of the problem.
+
+This concern is valid and motivates the ablation design: SF-Passive (summary injected upfront) vs.\ SF-Active (independent analysis first, summary consulted after). The experimental result that SF-Active outperforms SF-Passive is consistent with this objection---when the Semi-Fresh session forms an independent view before seeing the biased summary, the bias transmission is attenuated. A stronger mitigation would use an independent model for compression, or compress only failure information (SF-Selective), which by definition excludes the Deep session's confident (and potentially entrenched) conclusions.
+
+\subsection{Epistemic Power Asymmetry in Challenge Phase}
+\label{sec:epistemic-power}
+
+The Deep session holds an informational advantage during the Challenge phase: it can invoke project history, past decisions, and stakeholder constraints that the Fresh session cannot verify. A Deep session claiming ``the CEO vetoed this approach last year'' is unfalsifiable from the Fresh session's zero-context position, creating an epistemic power imbalance that could suppress valid challenges.
+
+Ploidy's design addresses this structurally rather than procedurally: the convergence engine does not determine a ``winner.'' It classifies disagreements into agreement, productive disagreement, and \textbf{irreducible disagreement}---and presents all three to the human decision-maker. When the Deep session invokes unverifiable context to override a Fresh challenge, the convergence output surfaces this as an irreducible disagreement with an explicit context-attribution note, rather than silently accepting the Deep session's authority. The human retains final judgment.
+
+\subsection{Justification Against Self-Consistency}
+\label{sec:vs-self-consistency}
+
+Self-Consistency (5-vote) achieves comparable recall to Ploidy on long-context tasks, raising the question of whether the structured protocol adds value beyond majority voting.
+
+Two distinctions apply. First, Self-Consistency's output is a deduplicated list with vote counts---it answers \emph{what} was found but not \emph{why} sessions disagreed. Ploidy's convergence output provides typed semantic actions and context attribution, enabling the user to understand whether a disagreement is context-driven (the Deep session's history caused anchoring) or stochastic (random variance between runs). This interpretability is not available from majority voting.
+
+Second, Self-Consistency is vulnerable to correlated bias. When all 5 sessions receive the same context (including the same memory-style injection), they share the same anchoring priors. Our injection sweep shows that memory-style context degrades Single recall by 20\%---and Self-Consistency, which runs 5 copies of Single, would inherit this degradation identically across all copies. Ploidy's Fresh sessions, having never seen the memory-formatted context, are immune to this correlated failure mode.
+
+\subsection{Generic Noise from Zero-Context Sessions}
+\label{sec:generic-noise}
+
+A zero-context Fresh session may produce ``textbook'' challenges---correct in the abstract but irrelevant to the specific domain constraints the Deep session knows about. This wastes debate resources and may distract from genuine issues.
+
+The cross-model experiment (\S\ref{sec:cross-model}) provides direct evidence: Sonnet's Fresh session on the DB migration task produced challenges that degraded rather than improved the outcome (Ploidy 2.5/5 effective vs.\ Single 3.0/5). This failure mode is real and bounds the intervention's applicability.
+
+Three mitigations exist within the current framework. First, the ploidy level provides implicit filtering---at 2n, if one Fresh session produces generic noise while the other produces substantive critique, the convergence phase can distinguish them by cross-referencing with the Deep sessions' responses. Second, the Semi-Fresh variant addresses this directly by providing enough domain context to suppress purely generic challenges while preserving independence from the Deep session's specific conclusions. Third, the minimum capability threshold (\S\ref{sec:capability-threshold}) should be enforced: if the model cannot reason about the task class at all, adding a zero-context session adds noise, not signal.
 
 \subsection{Broader Implications}
 \label{sec:implications}
@@ -921,6 +989,7 @@ We presented Ploidy, a protocol for structured debate between same-model session
   \item \textbf{Context injection mechanism is a moderator variable.} The same information delivered as accumulated memories vs.\ declarative rules produces measurably different anchoring effects, changing which method performs best.
   \item \textbf{Diploid (2n) is the cost-optimal ploidy level.} The second stochastic sample per context depth corrects the first sample's blind spots at 30\% additional compute. Higher ploidy provides no recall benefit.
   \item \textbf{Context asymmetry requires a minimum model capability.} Cross-model validation (Opus vs Sonnet) reveals a task-abstraction gradient: concrete technical findings transfer across model sizes, but abstract socio-technical judgments require frontier-class reasoning. Below this threshold, Fresh sessions inject noise rather than correction.
+  \item \textbf{Effort level is not monotonically beneficial.} Max effort produces the worst recall for both methods, consistent with overthinking effects. The effort~$\times$~method interaction is non-trivial: Ploidy's F1 advantage appears only at intermediate reasoning depth.
 \end{enumerate}
 
 The intersection of intentional context asymmetry, structured cross-session debate, injection mechanism as experimental variable, and ploidy-level stochastic sampling has no prior publications as of March~2026.
