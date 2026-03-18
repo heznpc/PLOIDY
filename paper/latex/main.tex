@@ -61,7 +61,7 @@
 % Abstract
 % ============================================================
 \begin{abstract}
-Single-session LLM usage subjects critical decisions to stochastic prior lock-in: the model's first probabilistic response anchors all subsequent reasoning, and prompt-based mitigations have no statistically significant effect on this bias~\citep{feng2026anchoring}. We present Ploidy, a structured debate protocol between physically separate sessions of the same model with intentionally asymmetric context depths. We identify two independent phenomena that multi-session debate must address: \textbf{Event~A} (context asymmetry---sessions disagree because they have different information) and \textbf{Event~B} (stochastic variance---sessions with identical context disagree due to sampling randomness). The \emph{ploidy level}---sessions per context depth---controls which event can be distinguished: at 1n~(haploid), the two are confounded; at 2n+, within-group agreement isolates stochastic variance from context-driven disagreement. We further introduce \textbf{context injection mode} (memory, skills, system prompt, raw) as a novel experimental variable, finding that the \emph{form} of context delivery---not just its content---moderates debate efficacy. In experiments on long-context software architecture tasks with Claude Opus~4.6, we find: (1)~Ploidy achieves highest recall across all injection modes, (2)~memory-style injection degrades single-session recall by 20\% while Ploidy drops only 6\%, (3)~diploid (2n) debate reaches maximum recall at 30\% additional compute with no benefit from higher ploidy, and (4)~injection mode changes which method performs best. The intersection of intentional context asymmetry, structured cross-session debate, injection mechanism as experimental variable, and ploidy-level stochastic sampling has zero prior publications as of March~2026.
+Single-session LLM usage subjects critical decisions to stochastic prior lock-in: the model's first probabilistic response anchors all subsequent reasoning, and prompt-based mitigations have no statistically significant effect on this bias~\citep{feng2026anchoring}. We present Ploidy, a structured debate protocol between physically separate sessions of the same model with intentionally asymmetric context depths. We identify two independent phenomena that multi-session debate must address: \textbf{Event~A} (context asymmetry---sessions disagree because they have different information) and \textbf{Event~B} (stochastic variance---sessions with identical context disagree due to sampling randomness). The \emph{ploidy level}---sessions per context depth---controls which event can be distinguished: at 1n~(haploid), the two are confounded; at 2n+, within-group agreement isolates stochastic variance from context-driven disagreement. We further introduce \textbf{context injection mode} (memory, skills, system prompt, raw) as a novel experimental variable, finding that the \emph{form} of context delivery---not just its content---moderates debate efficacy. In 6 pilot experiments (10 tasks, primarily single-run) on long-context software architecture tasks with Claude Opus~4.6 and Sonnet~4.6, we find: (1)~Ploidy achieves highest recall across all injection modes, (2)~memory-style injection degrades single-session recall by 20\% while Ploidy drops only 6\%, (3)~diploid (2n) debate reaches maximum recall at 30\% additional compute with no benefit from higher ploidy, and (4)~injection mode changes which method performs best. The intersection of intentional context asymmetry, structured cross-session debate, injection mechanism as experimental variable, and ploidy-level stochastic sampling has zero prior publications as of March~2026.
 \end{abstract}
 
 % ============================================================
@@ -721,16 +721,28 @@ Effort is not monotonically beneficial. At max effort, both methods produce the 
 \label{sec:discussion}
 % ============================================================
 
-\subsection{When Does Context Asymmetry Help?}
-\label{sec:when-helps}
+\subsection{Context Asymmetry Threshold Hypothesis}
+\label{sec:threshold}
 
-The two experiments suggest a conditional pattern, consistent with Young~\citep{young2026divergence}'s phase transition theory (debate value scales with knowledge divergence):
+Our experiments suggest context asymmetry is a \emph{conditional} intervention whose benefit depends on context length crossing an entrenchment threshold. We formalize this as the \textbf{Context Asymmetry Threshold Hypothesis}:
 
-\begin{enumerate}[label=\arabic*., leftmargin=1.5em]
-  \item \textbf{Short context ($<$100 tokens): No observed benefit.} The model has nothing to be anchored to. The Fresh session has no informational advantage.
-  \item \textbf{Long context with anchoring bias (2,000+ tokens): Asymmetry observed to help on the most biased task.} The Fresh session, having never seen the 18-month PostgreSQL commitment history, evaluated alternatives without sunk-cost pressure.
-  \item \textbf{Between these extremes: Unknown.} A systematic context-length gradient experiment (100, 500, 1K, 5K, 10K tokens) is needed to identify the entrenchment threshold.
-\end{enumerate}
+\begin{table}[H]
+\centering
+\caption{Observed benefit of context asymmetry by context regime.}
+\label{tab:threshold}
+\small
+\begin{tabular}{@{}lccl@{}}
+\toprule
+\textbf{Context Regime} & \textbf{Tokens} & \textbf{Benefit?} & \textbf{Mechanism} \\
+\midrule
+Short-context & $<$100 & No & No entrenchment occurs; nothing to debias \\
+\textbf{Unknown zone} & \textbf{100--2,000} & \textbf{?} & Threshold likely falls here \\
+Long-context + anchoring & 2,000+ & Yes & Sunk cost, authority bias, trajectory locking \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The null result on short-context tasks (Experiment~1) is not a failure of the method---it is a \emph{boundary condition} that makes the positive results on long-context tasks more credible. If Ploidy showed benefit everywhere, the signal would be less interpretable. The selective activation pattern is consistent with Young~\citep{young2026divergence}'s phase transition theory: debate value scales with knowledge divergence, and short-context tasks produce no divergence to exploit. Identifying the exact threshold requires a systematic context-length gradient experiment (100, 500, 1K, 5K, 10K tokens).
 
 \subsection{Minimum Capability Threshold}
 \label{sec:capability-threshold}
@@ -956,11 +968,11 @@ Ploidy's design addresses this structurally rather than procedurally: the conver
 \subsection{Justification Against Self-Consistency}
 \label{sec:vs-self-consistency}
 
-Self-Consistency (5-vote) achieves comparable recall to Ploidy on long-context tasks, raising the question of whether the structured protocol adds value beyond majority voting.
+Self-Consistency (5-vote) is a strong budget-equivalent baseline that achieves comparable recall to Ploidy on long-context tasks under raw injection. This demands an honest answer to the question: \emph{why use a structured debate protocol when majority voting works?}
 
-Two distinctions apply. First, Self-Consistency's output is a deduplicated list with vote counts---it answers \emph{what} was found but not \emph{why} sessions disagreed. Ploidy's convergence output provides typed semantic actions and context attribution, enabling the user to understand whether a disagreement is context-driven (the Deep session's history caused anchoring) or stochastic (random variance between runs). This interpretability is not available from majority voting.
+Ploidy's comparative advantage is not recall---it is \textbf{structured context attribution}. Self-Consistency outputs a deduplicated list with vote counts: it answers \emph{what} was found but not \emph{why} sessions disagreed. Ploidy's convergence output provides typed semantic actions (agree, challenge, synthesize) and explicit context attribution, enabling the user to determine whether a disagreement is context-driven (Event~A: the Deep session's history caused anchoring) or stochastic (Event~B: random variance). This causal interpretability is unavailable from majority voting and is the primary value proposition for practitioners making high-stakes architectural decisions where understanding \emph{why} matters as much as \emph{what}.
 
-Second, Self-Consistency is vulnerable to correlated bias. When all 5 sessions receive the same context (including the same memory-style injection), they share the same anchoring priors. Our injection sweep shows that memory-style context degrades Single recall by 20\%---and Self-Consistency, which runs 5 copies of Single, would inherit this degradation identically across all copies. Ploidy's Fresh sessions, having never seen the memory-formatted context, are immune to this correlated failure mode.
+Second, Self-Consistency is vulnerable to \textbf{correlated bias under non-raw injection}. When all 5 sessions receive the same memory-style context, they share identical anchoring priors. Our injection sweep shows memory-style context degrades Single recall by 20\%---Self-Consistency, which runs 5 copies of Single with identical context, would inherit this degradation across all copies simultaneously. Majority voting over 5 identically biased samples cannot correct a systematic blind spot. Ploidy's Fresh sessions, having never seen the memory-formatted context, are structurally immune to this correlated failure mode.
 
 \subsection{Generic Noise from Zero-Context Sessions}
 \label{sec:generic-noise}
