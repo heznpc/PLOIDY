@@ -1,13 +1,21 @@
 # Ploidy
 
-**Same model, different context depths, better decisions.**
+**Intentional context asymmetry to reduce confirmation bias in LLMs.**
 
 [![CI](https://github.com/heznpc/ploidy/actions/workflows/ci.yml/badge.svg)](https://github.com/heznpc/ploidy/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-heznpc.github.io%2Fploidy-blue)](https://heznpc.github.io/ploidy/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 
-Ploidy is an MCP server that orchestrates structured debates between multiple sessions of the same AI model — each with intentionally different context depths. When two sessions of the same model disagree, the cause is clear: one has context the other doesn't. That's a signal you can act on.
+## Why
+
+Ask the same model the same question in separate sessions. You'll get different answers every time — some agree, some disagree, some equivocate. If you continue in just one session, the model's first stochastic response becomes an anchor. It reinforces its own prior, the user builds on it, and the session locks into a trajectory that prompt engineering [cannot undo](https://arxiv.org/abs/2603.12123).
+
+This means identical models, identical prompts, identical users — but different project outcomes depending on which random sample landed first. The user is in a probability lottery without knowing it. Task completion time varies, task success varies, and perceived "model performance" varies — all from the same model.
+
+This is not the same problem that multi-agent teams solve. Agent teams (CrewAI, MetaGPT, Claude Agent Teams) divide labor across models for throughput. More hands, same perspective. Under symmetric information, scaling agents is [mathematically equivalent to majority voting](https://arxiv.org/abs/2508.17536) over identically biased samples — it cannot improve expected correctness.
+
+Ploidy takes the orthogonal approach: **deliberately create context asymmetry within the same model, then make the asymmetric sessions debate**. A deep session carries full project context. A fresh session starts with zero prior commitment. When they disagree, the cause is isolatable — one has context the other doesn't. That disagreement is the signal.
 
 ## Quick Start
 
@@ -24,8 +32,6 @@ python -m ploidy
 
 **Terminal 2 (Fresh session)** — tell your AI:
 > "Join Ploidy debate a1b2c3d4e5f6"
-
-The Deep session has your full project context. The Fresh session starts clean. They debate through a structured protocol, and the disagreements are interpretable because context is the only variable.
 
 ### MCP Client Configuration
 
@@ -56,6 +62,8 @@ Terminal 1 (Deep)              Terminal 2 (Fresh)
                          (agreements, disagreements,
                           confidence score)
 ```
+
+Sessions debate through typed semantic actions (agree, challenge, propose alternative, synthesize) across a five-phase protocol: Independent → Position → Challenge → Convergence → Complete. The Context Asymmetry Spectrum ranges from Deep (full context) through Semi-Fresh (compressed context, passively or actively delivered) to Fresh (zero context).
 
 ## Tools
 
@@ -99,6 +107,8 @@ docker compose up
 ## Research
 
 Ploidy extends Cross-Context Review ([Song 2026](https://arxiv.org/abs/2603.12123)) from unidirectional fresh-session review to bidirectional structured debate. The intersection of context asymmetry × same-model debate × structured protocol has zero published papers as of March 2026.
+
+In pilot experiments, context asymmetry shows no benefit on short-context tasks where entrenchment does not occur — but on long-context tasks with anchoring bias, asymmetric debate achieves the highest ground-truth recall (5/5 vs. single session's 3/5). These results bound where the intervention applies.
 
 ## License
 
