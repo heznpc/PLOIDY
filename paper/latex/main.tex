@@ -714,7 +714,25 @@ Korean  & \textbf{5F}    & 4F+1P & 2F+3P \\
 \end{tabular}
 \end{table}
 
-\noindent The most striking observation is SF-Active's recall drop in Korean: from 5/5 (\textsc{found}) in English to 2/5 \textsc{found} + 3 \textsc{partial} in Korean---a 30 percentage point decline. This is consistent with $H_1$ (euphemization): the Korean ``independent analysis then consult summary'' workflow may produce softer language that the English-language judge scores as \textsc{partial} rather than \textsc{found}. Conversely, Single Session's Korean performance (5F) exceeds its English performance (3F+2P), suggesting that full project context may provide technical vocabulary anchoring that resists euphemization. These are single-run observations requiring validation, but they motivate systematic cross-linguistic evaluation.
+\noindent Extended across all three long-context tasks:
+
+\begin{table}[H]
+\centering
+\caption{Cross-linguistic results (high effort, single run per cell). F = \textsc{found}, P = \textsc{partial}.}
+\label{tab:lang-full}
+\small
+\begin{tabular}{@{}lr cccc@{}}
+\toprule
+\textbf{Task} & \textbf{GT} & \textbf{Single (en)} & \textbf{Single (ko)} & \textbf{SF-Active (en)} & \textbf{SF-Active (ko)} \\
+\midrule
+DB migration   & 5 & 3F+2P & \textbf{5F}  & \textbf{5F} & 2F+3P \\
+Auth overhaul  & 5 & 5F    & 4F+1P        & \textbf{5F} & \textbf{5F} \\
+Microservice   & 6 & 5F+1P & ---          & \textbf{6F} & \textbf{6F} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent SF-Active maintains perfect recall in Korean on 2 of 3 tasks (auth, microservice) but drops sharply on DB migration (5F$\to$2F+3P, $-30$pp). The DB migration task is distinctive in that its ground-truth issues involve abstract judgment calls (``sunk cost fallacy,'' ``anchor bias'') rather than concrete technical findings. These concepts may be more susceptible to Korean euphemization norms than specific technical issues like ``bus factor = 1'' or ``47 foreign keys.'' This suggests $H_1$ (euphemization) is \textbf{task-dependent}: linguistic framing affects recall primarily on issues requiring normative judgment rather than technical identification. Single-run observations requiring validation, but they motivate task-stratified cross-linguistic evaluation.
 
 \subsection{Limitations}
 \label{sec:limitations}
