@@ -650,7 +650,25 @@ Key hypotheses to test:
   \item $H_3$: The optimal cost--quality point is asymmetric debate at medium effort, not single session at max effort.
 \end{itemize}
 
-This experiment is enabled by the v0.2 implementation but has not yet been executed. Results will appear in a future revision.
+Preliminary pilot results on the DB migration task (single run each) suggest effort matters:
+
+\begin{table}[H]
+\centering
+\caption{Effort level pilot results (DB migration task, single run per cell).}
+\label{tab:effort-pilot}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Effort} & \textbf{Single Session} & \textbf{Ploidy} & \textbf{SF-Active} \\
+\midrule
+Low  & 4F+1P & 4F+1P & ---   \\
+High & 3F+2P & 4F+1P & \textbf{5F} \\
+Max  & \textbf{5F}    & 4F+1P & ---   \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent At \texttt{max} effort, Single Session achieves 5/5 (matching SF-Active at \texttt{high}), while Ploidy remains at 4F+1P across all effort levels. This is consistent with $H_2$: context asymmetry provides greater benefit at moderate effort, while at maximum effort a single session may overcome anchoring through deeper reasoning alone. These are single-run observations subject to stochastic variance.
 
 \subsection{Linguistic Framing as Experimental Variable}
 \label{sec:language}
@@ -679,7 +697,24 @@ Key hypotheses:
   \item $H_3$: Context asymmetry may \emph{partially compensate} for localization loss---if the Fresh session in language $L$ misses an issue due to euphemization, the Deep session (with stronger technical framing from project context) may catch it during the challenge phase.
 \end{itemize}
 
-This experiment is enabled but not yet executed. If $H_2$ is confirmed, it would imply that multi-agent systems operating across languages need language-aware context injection strategies---a finding with implications for global deployment of AI verification tools.
+Preliminary pilot results on the DB migration task (Korean vs.\ English, \texttt{high} effort, single run each):
+
+\begin{table}[H]
+\centering
+\caption{Language pilot results (DB migration task, single run per cell).}
+\label{tab:lang-pilot}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Language} & \textbf{Single Session} & \textbf{Ploidy} & \textbf{SF-Active} \\
+\midrule
+English & 3F+2P & 4F+1P & \textbf{5F} \\
+Korean  & \textbf{5F}    & 4F+1P & 2F+3P \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The most striking observation is SF-Active's recall drop in Korean: from 5/5 (\textsc{found}) in English to 2/5 \textsc{found} + 3 \textsc{partial} in Korean---a 30 percentage point decline. This is consistent with $H_1$ (euphemization): the Korean ``independent analysis then consult summary'' workflow may produce softer language that the English-language judge scores as \textsc{partial} rather than \textsc{found}. Conversely, Single Session's Korean performance (5F) exceeds its English performance (3F+2P), suggesting that full project context may provide technical vocabulary anchoring that resists euphemization. These are single-run observations requiring validation, but they motivate systematic cross-linguistic evaluation.
 
 \subsection{Limitations}
 \label{sec:limitations}
