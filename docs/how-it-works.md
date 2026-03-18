@@ -43,6 +43,8 @@ Ploidy the project works the same way:
 
 The system is not limited to two sessions. Like polyploid organisms, Ploidy supports N sessions with varying context levels -- from fully loaded to completely fresh.
 
+The metaphor operates at the **population level**, not the cellular level. In evolutionary biology, ploidy variation within a population is a primary driver of speciation and adaptive diversity -- diploid and tetraploid individuals of the same species coexist, and their differing chromosome counts produce different capabilities from the same underlying genome. The number of forms does not matter; it is the **existence of variation itself** that makes the population resilient. Similarly, Ploidy's value comes not from having a specific number of sessions, but from the fact that sessions with differing context depths -- the same model, different "dosages" of accumulated knowledge -- produce a diversity of perspectives that no single session can achieve alone.
+
 ## The Generational Dialogue Metaphor
 
 There is another way to think about it: a conversation between generations.

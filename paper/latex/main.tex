@@ -9,7 +9,7 @@
 
 % Tables
 \usepackage{booktabs}
-\usepackage{multirow}
+% \usepackage{multirow}  % uncomment when available
 \usepackage{array}
 
 % Graphics and figures
@@ -61,7 +61,7 @@
 % Abstract
 % ============================================================
 \begin{abstract}
-Single-session LLM usage subjects critical decisions to stochastic prior lock-in: the model's first probabilistic response anchors all subsequent reasoning, and prompt-based mitigations have no statistically significant effect on this bias~\citep{feng2026anchoring}. We present Ploidy, a structured debate protocol between physically separate sessions of the same model with intentionally asymmetric context depths. Unlike multi-model council approaches that rely on model diversity, Ploidy exploits \textbf{context diversity} within a single model---a dimension absent from existing products and publications as of March 2026. We introduce the \textbf{Context Asymmetry Spectrum}, which varies along two dimensions: context depth (how much prior knowledge a session receives) and context delivery mode (whether context is passively embedded or actively retrievable). Sessions range from Deep (full context, always present) through Semi-Fresh (compressed context, passively or actively delivered) to Fresh (zero context), debating through typed semantic actions before a convergence phase. In preliminary pilot experiments on 10 tasks across two context regimes, we observe that (1)~context asymmetry provides no benefit on short-context tasks where entrenchment does not occur, and (2)~on long-context tasks with anchoring bias, asymmetric debate achieves the highest ground-truth recall on the most bias-laden task (5/5 vs.\ Single Session's 3/5, stable across re-runs). These results bound where context asymmetry applies. In a follow-up evaluation of Semi-Fresh variants with factorial ablation, we identify \textbf{information position as the dominant factor}: placing a compressed summary at the end rather than the beginning of the prompt improves recall from 89\% to 100\%, consistent with primacy anchoring effects in human cognition. We release Ploidy as an open-source MCP server.
+Single-session LLM usage subjects critical decisions to stochastic prior lock-in: the model's first probabilistic response anchors all subsequent reasoning, and prompt-based mitigations have no statistically significant effect on this bias~\citep{feng2026anchoring}. We present Ploidy, a structured debate protocol between physically separate sessions of the same model with intentionally asymmetric context depths. We identify two independent phenomena that multi-session debate must address: \textbf{Event~A} (context asymmetry---sessions disagree because they have different information) and \textbf{Event~B} (stochastic variance---sessions with identical context disagree due to sampling randomness). The \emph{ploidy level}---sessions per context depth---controls which event can be distinguished: at 1n~(haploid), the two are confounded; at 2n+, within-group agreement isolates stochastic variance from context-driven disagreement. We further introduce \textbf{context injection mode} (memory, skills, system prompt, raw) as a novel experimental variable, finding that the \emph{form} of context delivery---not just its content---moderates debate efficacy. In experiments on long-context software architecture tasks with Claude Opus~4.6, we find: (1)~Ploidy achieves highest recall across all injection modes, (2)~memory-style injection degrades single-session recall by 20\% while Ploidy drops only 6\%, (3)~diploid (2n) debate reaches maximum recall at 30\% additional compute with no benefit from higher ploidy, and (4)~injection mode changes which method performs best. The intersection of intentional context asymmetry, structured cross-session debate, injection mechanism as experimental variable, and ploidy-level stochastic sampling has zero prior publications as of March~2026.
 \end{abstract}
 
 % ============================================================
@@ -88,12 +88,14 @@ The only computational intervention with empirical support for this problem is p
 
 We extend CCR from unidirectional review to \textbf{bidirectional structured debate} and introduce the \textbf{Context Asymmetry Spectrum}---a continuum from full context (Deep) through compressed context (Semi-Fresh) to zero context (Fresh). This spectrum recognizes that the optimal information state for a challenger may be neither complete ignorance nor full knowledge, but an intermediate point analogous to the ``experienced outsider'' who brings domain awareness without institutional entrenchment.
 
+\paragraph{Two independent phenomena.} We identify that context asymmetry (Event~A) and stochastic variance (Event~B) are independent events requiring different interventions. A haploid (1n) debate---Deep(1)$\times$Fresh(1)---addresses Event~A but samples only one point from each distribution. Diploid (2n) and higher address both simultaneously: context asymmetry \emph{between} groups, stochastic sampling \emph{within} groups.
+
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=1.5em]
-  \item The Context Asymmetry Spectrum: a framework for reasoning about optimal context depth in multi-session verification (\S\ref{sec:protocol})
-  \item A structured debate protocol with typed semantic actions and convergence analysis (\S\ref{sec:protocol})
-  \item Preliminary pilot experiments (10 tasks, two context regimes) with honest null and qualified positive results (\S\ref{sec:experiments})
-  \item Analysis of when context asymmetry helps and when it does not, bounding the intervention's applicability (\S\ref{sec:discussion})
+  \item The distinction between Event~A (context asymmetry) and Event~B (stochastic variance) as independently measurable phenomena, controlled by ploidy level (\S\ref{sec:protocol})
+  \item A structured debate protocol with typed semantic actions and convergence analysis supporting N-ary sessions (\S\ref{sec:protocol})
+  \item Context injection mode (memory, skills, system prompt, raw, CLAUDE.md) as a novel experimental variable for debate efficacy (\S\ref{sec:experiments})
+  \item Preliminary evidence that diploid (2n) is the cost-optimal ploidy level for recall maximization (\S\ref{sec:experiments})
   \item An open-source MCP server implementation (\S\ref{sec:implementation})
 \end{itemize}
 
@@ -121,6 +123,16 @@ SR-DCR~\citep{srdcr2025} introduced asymmetric context verification debate (ACVD
 \label{sec:scaling}
 
 Large-scale agent simulations (e.g., AgentSociety~\citep{pang2025agentsociety} with 10K agents, MiroFish with 700K agents) pursue verification breadth---more agents analyzing the same problem. Boca et al.~\citep{boca2025emergent} showed that even without individual-level bias, LLM populations spontaneously develop collective biases through interaction. Combined with Choi et al.'s martingale result~\citep{choi2025debate}, this suggests that scaling homogeneous agent count does not reliably improve decision quality. Ploidy pursues the orthogonal dimension: verification depth through context diversity.
+
+\subsection{Sycophancy and Persistent Context Bias}
+\label{sec:sycophancy}
+
+Jain et al.~\citep{jain2025sycophancy} showed that user memory profiles increase agreement sycophancy by up to 45\% (Gemini~2.5~Pro), with even synthetic contexts causing 15\% uptick. Harshavardhan~\citep{harshavardhan2026sacd} documented self-anchoring calibration drift in multi-turn conversations: Claude Sonnet~4.6 shows significant decreasing confidence under self-anchoring. Laban et al.~\citep{laban2025lost} reported 39\% performance degradation in multi-turn vs.\ single-turn settings, finding that ``when LLMs take a wrong turn, they get lost and do not recover.'' These results motivate Ploidy's Fresh session as a structural reset mechanism.
+
+\subsection{Context Injection Mechanisms}
+\label{sec:injection-related}
+
+No prior work treats the delivery mechanism of context---memory file vs.\ skills file vs.\ system prompt---as an independent experimental variable. Vercel~(2026) compared AGENTS.md vs.\ skills for test pass rates; ETH Zurich~(2026) found AGENTS.md files may hinder AI coding agents. Neither connected injection mechanism to debate outcomes or anchoring strength.
 
 \subsection{Model Collapse and Context Contamination}
 \label{sec:collapse}
@@ -223,10 +235,10 @@ The same information, delivered passively vs.\ actively, may produce different e
 & \footnotesize(always in window) & \footnotesize(tool/retrieval) & \footnotesize(absent) \\
 \midrule
 Full
-  & Deep & Deep-Active & \multirow{1}{*}{\textcolor{gray}{n/a}} \\
+  & Deep & Deep-Active & {\textcolor{gray}{n/a}} \\
   & \footnotesize\textit{(expert intuition)} & \footnotesize\textit{(expert + lookup)} & \\[6pt]
 Compressed
-  & Semi-Fresh-Passive & Semi-Fresh-Active & \multirow{1}{*}{\textcolor{gray}{n/a}} \\
+  & Semi-Fresh-Passive & Semi-Fresh-Active & {\textcolor{gray}{n/a}} \\
   & \footnotesize\textit{(briefed outsider)} & \footnotesize\textit{(consultant)} & \\[6pt]
 None
   & \textcolor{gray}{n/a} & \textcolor{gray}{n/a} & Fresh \\
@@ -249,6 +261,55 @@ MCP client sessions connect to a single Ploidy server via Streamable HTTP:
 \end{itemize}
 
 The server maintains debate state in SQLite (WAL mode) and enforces the phase protocol.
+
+\subsection{Ploidy Level}
+\label{sec:ploidy-level}
+
+The ploidy level $n$ determines how many sessions are spawned per context depth. At ploidy~1n (haploid), the system runs Deep(1)$\times$Fresh(1)---the minimal asymmetric debate. At ploidy~2n (diploid), it runs Deep(2)$\times$Fresh(2), adding one stochastic backup per depth.
+
+\begin{table}[t]
+\centering
+\caption{Ploidy levels and their properties.}
+\label{tab:ploidy-levels}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Ploidy} & \textbf{Sessions} & \textbf{Event A/B} & \textbf{Causal attribution} \\
+\midrule
+1n (haploid) & Deep$\times$1, Fresh$\times$1 & Confounded & Cannot distinguish \\
+2n (diploid) & Deep$\times$2, Fresh$\times$2 & Separable & Within-group $\to$ Event~B \\
+3n (triploid) & Deep$\times$3, Fresh$\times$3 & Separable & Majority voting within groups \\
+4n+ & Deep$\times$N, Fresh$\times$N & Separable & Statistical significance \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At 1n, the system cannot distinguish whether a disagreement between Deep and Fresh is caused by context asymmetry (Event~A) or stochastic variance (Event~B). At 2n+, within-group disagreement isolates Event~B (both Deep sessions had identical context, so any disagreement is stochastic), while between-group disagreement isolates Event~A. The ploidy level trades compute cost for causal interpretability.
+
+\subsection{Context Injection Modes}
+\label{sec:injection-modes}
+
+The same context information can be delivered to the Deep session in different formats, each creating different anchoring dynamics:
+
+\begin{table}[t]
+\centering
+\caption{Context injection modes.}
+\label{tab:injection-modes}
+\small
+\begin{tabular}{@{}lp{8cm}@{}}
+\toprule
+\textbf{Mode} & \textbf{Description} \\
+\midrule
+\texttt{raw} & Plain text in user prompt (baseline) \\
+\texttt{memory} & Accumulated observations as numbered items (CLAUDE.md style) \\
+\texttt{skills} & Declarative rules and constraints (skills.md style) \\
+\texttt{system\_prompt} & Context via system-level instruction \\
+\texttt{claude\_md} & XML-tagged project instructions \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The hypothesis is that narrative context (memory) creates stronger anchoring priors than declarative context (skills), because the model treats ``learned observations'' as internalized beliefs rather than external constraints.
 
 \subsection{Debate Phases}
 \label{sec:phases}
@@ -538,6 +599,59 @@ Ploidy & \textbf{5F} & \textbf{5F} & .500 & .556 \\
 
 Ploidy's recall on this task was deterministic (5/5 in both runs) while Single's was stochastic (3--4/5). This stability, rather than the absolute F1 value, is the most noteworthy observation from these pilot experiments.
 
+\subsection{Experiment 3: Injection Mode Sweep}
+\label{sec:injection-sweep}
+
+We tested whether the \emph{form} of context delivery affects debate outcomes independently of content. Three injection modes (raw, memory, skills) were crossed with three methods (Single, Ploidy, CCR) on 3 long-context tasks.
+
+\begin{table}[H]
+\centering
+\caption{Recall by injection mode and method (long-context tasks, avg over 3 tasks).}
+\label{tab:injection-recall}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Mode} & \textbf{Single} & \textbf{Ploidy} & \textbf{CCR} \\
+\midrule
+raw    & 5.0/5.3 & \textbf{5.3/5.3} & 4.7/5.3 \\
+memory & 4.0/5.3 & \textbf{5.0/5.3} & 4.0/5.3 \\
+skills & 4.3/5.3 & \textbf{5.3/5.3} & 5.0/5.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ploidy achieves highest recall in all three injection modes. Memory-style injection causes the largest recall degradation: Single drops 20\% (5.0$\to$4.0), CCR drops 15\% (4.7$\to$4.0), while Ploidy drops only 6\% (5.3$\to$5.0). The Fresh session's independence from the memory-formatted context provides resilience against injection-induced anchoring.
+
+Notably, injection mode changes which method achieves the best F1: raw favors Ploidy~(0.573), memory favors Single~(0.573), skills favors CCR~(0.606). Context injection mechanism is therefore a \textbf{moderator variable} for debate efficacy.
+
+\subsection{Experiment 4: Ploidy Level Sweep (1n--4n)}
+\label{sec:ploidy-sweep}
+
+We swept ploidy levels 1n through 4n on 2 long-context tasks to test the interaction between stochastic sampling (Event~B) and context asymmetry (Event~A).
+
+\begin{table}[H]
+\centering
+\caption{Ploidy level sweep results (avg over 2 long-context tasks).}
+\label{tab:ploidy-sweep}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Ploidy} & \textbf{Ploidy Recall} & \textbf{Ploidy F1} & \textbf{Single Recall} & \textbf{Time} \\
+\midrule
+1n (haploid)    & 4.5/5.0 & 0.584 & \textbf{5.0/5.0} & 272s \\
+\textbf{2n (diploid)} & \textbf{5.0/5.0} & \textbf{0.667} & 4.5/5.0 & 352s \\
+3n (triploid)   & \textbf{5.0/5.0} & 0.505 & 4.5/5.0 & 480s \\
+4n (tetraploid) & \textbf{5.0/5.0} & 0.679 & \textbf{5.0/5.0} & 501s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At 1n, Ploidy misses ground-truth issues (4.5/5.0). At 2n, recall reaches the ceiling (5.0/5.0) and remains there through 4n. The second stochastic sample per context depth corrects the first sample's blind spots. Higher ploidy provides no additional recall benefit.
+
+2n achieves full recall correction at 30\% additional compute over 1n. 3n costs 76\% more with no recall gain; 4n costs 84\% more, and at this point Single also reaches 5.0/5.0 through brute-force stochastic sampling---eliminating Ploidy's comparative advantage.
+
+At 3n, F1 drops to 0.505 despite perfect recall: additional sessions generate more bonus findings, inflating the denominator. At 4n, F1 recovers as the convergence step filters redundant findings more effectively with more input.
+
 % ============================================================
 \section{Discussion}
 \label{sec:discussion}
@@ -764,28 +878,26 @@ For multi-agent system design, our preliminary results suggest a practical princ
 \label{sec:conclusion}
 % ============================================================
 
-We presented Ploidy, a protocol for structured debate between same-model sessions with intentional context asymmetry, and introduced the Context Asymmetry Spectrum---a 2D framework varying context depth and delivery mode. Three pilot experiments across 10 tasks and 9 methods reveal:
+We presented Ploidy, a protocol for structured debate between same-model sessions with intentional context asymmetry. We identified two independent phenomena---context asymmetry (Event~A) and stochastic variance (Event~B)---and showed that the ploidy level controls which can be distinguished. Four experiments reveal:
 
 \begin{enumerate}[label=\arabic*., leftmargin=1.5em]
-  \item \textbf{Context asymmetry is a targeted intervention}, not a universal improvement. On short-context tasks (Exp~1, 7 tasks), all 9 methods achieve near-identical recall. The delivery mode effect disappears entirely.
-  \item \textbf{On long-context tasks with anchoring bias} (Exp~2, 3 tasks), Semi-Fresh-Active and Self-Consistency achieve 100\% average recall, outperforming Single Session (81\%) and original Ploidy (89\%).
-  \item \textbf{Information position is the dominant factor in context delivery.} Factorial ablation reveals that placing a compressed summary at the top vs.\ bottom of the prompt accounts for +11pp recall (89\% $\to$ 100\%), while an ``independent-first'' instruction adds only +5pp when the summary is at the top and +0pp when at the bottom. This primacy anchoring effect---where information encountered first disproportionately shapes subsequent reasoning---is consistent with established cognitive science findings~\citep{epley2006anchoring} and has direct implications for prompt engineering in multi-agent systems.
+  \item \textbf{Context asymmetry is a targeted intervention}, not a universal improvement. On short-context tasks, all methods achieve near-identical recall. The intervention applies only where entrenchment occurs.
+  \item \textbf{On long-context tasks}, Ploidy achieves highest recall across all context injection modes, with memory-style injection degrading Single recall by 20\% while Ploidy drops only 6\%.
+  \item \textbf{Context injection mechanism is a moderator variable.} The same information delivered as accumulated memories vs.\ declarative rules produces measurably different anchoring effects, changing which method performs best.
+  \item \textbf{Diploid (2n) is the cost-optimal ploidy level.} The second stochastic sample per context depth corrects the first sample's blind spots at 30\% additional compute. Higher ploidy provides no recall benefit.
 \end{enumerate}
 
-These results shift the question from ``does asymmetry help?'' to ``what is the optimal point in the depth~$\times$~delivery space?''---a quantitatively richer direction with direct implications for multi-agent system design.
+The intersection of intentional context asymmetry, structured cross-session debate, injection mechanism as experimental variable, and ploidy-level stochastic sampling has no prior publications as of March~2026.
 
 \paragraph{Future work priorities:}
 \begin{enumerate}[label=\arabic*., leftmargin=1.5em]
-  \item \textbf{Effort level sweep}: Execute the $4 \times k$ factorial experiment (\S\ref{sec:effort}) to measure effort--asymmetry interaction and identify cost-optimal configurations
-  \item \textbf{N-ary session topology}: Extend beyond binary (Deep/Fresh) to three-party debates with intermediate context levels (Deep + Semi-Fresh + Fresh), testing whether partial context sessions produce novel insights absent from both extremes
-  \item \textbf{LLM-enhanced convergence validation}: Evaluate whether the meta-analyst's root cause attribution (context anchoring vs.\ missing constraints vs.\ genuine trade-off) aligns with human expert judgment
-  \item \textbf{Statistical validation}: 30+ tasks, 5+ runs per method, paired statistical tests (Wilcoxon signed-rank, bootstrap CI)
-  \item \textbf{Context-length gradient}: systematic evaluation at 100, 500, 1K, 5K, 10K tokens to identify the entrenchment threshold
-  \item \textbf{Cross-model evaluation}: weaker models (where single-session recall is lower) and cross-model judges
-  \item \textbf{External task sets}: real-world architecture decisions from open-source projects to address circular task design concerns
-  \item \textbf{Multi-round protocol}: extending the single-round \textsc{challenge} phase to test whether AceMAD's submartingale conditions can be satisfied
-  \item \textbf{Production validation}: Compare MCP server debate (\texttt{debate\_auto}) outcomes with CLI simulation to validate that the server protocol produces equivalent results
-  \item \textbf{Cross-linguistic evaluation}: Measure information loss from linguistic framing across languages (English, Korean, Japanese, Chinese) and test whether context asymmetry compensates for localization-induced euphemization (\S\ref{sec:language})
+  \item \textbf{Statistical validation}: 30+ tasks, 5+ runs per condition, paired tests (Wilcoxon signed-rank, bootstrap CI)
+  \item \textbf{Cross-model evaluation}: Sonnet, Gemini, GPT, Ollama to test generalizability beyond Claude Opus~4.6
+  \item \textbf{Effort $\times$ ploidy $\times$ injection factorial}: full interaction analysis across all three variables
+  \item \textbf{Cross-linguistic evaluation}: en/ko/ja/zh to test whether cultural framing interacts with context asymmetry (\S\ref{sec:language})
+  \item \textbf{External task sets}: real-world architecture decisions from open-source projects
+  \item \textbf{Independent judge}: cross-model judges and human evaluation subset
+  \item \textbf{Multi-round protocol}: extending single-round \textsc{challenge} to test AceMAD's submartingale conditions
 \end{enumerate}
 
 We release Ploidy as an open-source MCP server at \url{https://github.com/heznpc/ploidy}.

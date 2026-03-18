@@ -23,12 +23,16 @@ Experimental Variables:
   --effort         Effort level (low/medium/high/max) — controls LLM reasoning depth
   --model          Model identifier
   --long           Use long-context tasks with anchoring biases
+  --injection      Context injection mode (raw/system_prompt/memory/skills/claude_md)
+  --lang           Output language (en/ko/ja/zh)
 
 Usage:
     python experiments/run_experiment.py
     python experiments/run_experiment.py --tasks 0,1,2 --methods ploidy,single
     python experiments/run_experiment.py --long --effort high --methods single,ploidy,sf_active
     python experiments/run_experiment.py --long --effort-sweep   # Run all effort levels
+    python experiments/run_experiment.py --injection-sweep        # Run all injection modes
+    python experiments/run_experiment.py --injection memory --methods ploidy,single
 """
 
 import argparse
@@ -43,6 +47,9 @@ MODEL = "claude-opus-4-6"
 JUDGE_MODEL = "claude-opus-4-6"
 EFFORT = "high"  # default effort level
 LANGUAGE = "en"  # default output language
+INJECTION_MODE = "raw"  # default context injection mode
+DEEP_N = 1  # number of Deep sessions (stochastic sampling)
+FRESH_N = 1  # number of Fresh sessions (stochastic sampling)
 
 # Valid effort levels for Claude Code
 EFFORT_LEVELS = ["low", "medium", "high", "max"]
@@ -55,11 +62,142 @@ LANGUAGES = {
     "zh": "请用中文回答。尽可能将技术术语翻译成中文。",
 }
 
+# Context injection modes — tests whether the *form* of context delivery
+# affects model behavior and debate outcomes, independent of content.
+#
+# Hypotheses:
+# - H1: Memory-style injection (accumulated observations) may produce more
+#        anchored/sycophantic responses than skills-style (declarative rules)
+# - H2: System-prompt injection may create stronger priors than user-message
+#        injection due to positional authority bias
+# - H3: The interaction between injection mode and context asymmetry may
+#        differ — Fresh sessions may be differentially affected by how the
+#        Deep session's context was originally formed
+INJECTION_MODES = {
+    "raw": {
+        "description": "Raw context in user prompt (baseline)",
+        "format": lambda ctx: f"Context about this code/system:\n{ctx}",
+    },
+    "system_prompt": {
+        "description": "Context as system-level instruction",
+        "format": lambda ctx: (
+            f"You are a senior engineer with deep knowledge of this system. "
+            f"You have the following project context that informs your analysis:\n\n{ctx}"
+        ),
+    },
+    "memory": {
+        "description": "Context as accumulated memories (CLAUDE.md / memory.md style)",
+        "format": lambda ctx: (
+            "The following memories were accumulated from your prior work sessions "
+            "on this project. They represent observations, decisions, and lessons "
+            "learned over time:\n\n"
+            "---\n"
+            "## Project Memory\n\n"
+            + "\n".join(
+                f"- **Observation #{i + 1}**: {line.strip()}"
+                for i, line in enumerate(ctx.strip().split("\n"))
+                if line.strip()
+            )
+            + "\n---"
+        ),
+    },
+    "skills": {
+        "description": "Context as declarative rules/capabilities (skills.md style)",
+        "format": lambda ctx: (
+            "# Project Skills & Rules\n\n"
+            "When analyzing this codebase, apply the following rules and constraints:\n\n"
+            + "\n".join(
+                f"- RULE: {line.strip()}"
+                for i, line in enumerate(ctx.strip().split("\n"))
+                if line.strip()
+            )
+        ),
+    },
+    "claude_md": {
+        "description": "Context as CLAUDE.md project instructions",
+        "format": lambda ctx: (
+            f"<project-instructions>\n"
+            f"# CLAUDE.md\n\n"
+            f"## Project Context\n\n{ctx}\n\n"
+            f"## Conventions\n"
+            f"- Be thorough in code review\n"
+            f"- Flag all security issues\n"
+            f"- Consider operational context\n"
+            f"</project-instructions>"
+        ),
+    },
+}
+
+
+# ─── Context Injection Helper ────────────────────────────────────────────────
+
+
+def format_deep_context(context: str, mode: str = None) -> str:
+    """Format context for the Deep session using the specified injection mode.
+
+    Args:
+        context: Raw context string from the task.
+        mode: Injection mode key (raw/system_prompt/memory/skills/claude_md).
+
+    Returns:
+        Formatted context string.
+    """
+    actual_mode = mode or INJECTION_MODE
+    if actual_mode not in INJECTION_MODES:
+        actual_mode = "raw"
+    return INJECTION_MODES[actual_mode]["format"](context)
+
+
+def build_deep_prompt(task_context: str, task_prompt: str, mode: str = None) -> str:
+    """Build the full Deep session prompt with injection-mode-appropriate context.
+
+    For system_prompt mode, context goes into --system-prompt flag via call_llm.
+    For all other modes, context is prepended to the user prompt.
+
+    Args:
+        task_context: The task's context string.
+        task_prompt: The task's prompt string.
+        mode: Injection mode key.
+
+    Returns:
+        The user prompt (context may be embedded or separate depending on mode).
+    """
+    actual_mode = mode or INJECTION_MODE
+    formatted_ctx = format_deep_context(task_context, actual_mode)
+
+    if actual_mode == "system_prompt":
+        # Context goes via --system-prompt; user prompt has only the task
+        return task_prompt
+    else:
+        return f"{formatted_ctx}\n\n{task_prompt}"
+
+
+def get_system_prompt_for_mode(task_context: str, mode: str = None) -> str | None:
+    """Return system prompt if injection mode uses it, else None.
+
+    Args:
+        task_context: The task's context string.
+        mode: Injection mode key.
+
+    Returns:
+        System prompt string, or None.
+    """
+    actual_mode = mode or INJECTION_MODE
+    if actual_mode == "system_prompt":
+        return format_deep_context(task_context, actual_mode)
+    return None
+
 
 # ─── LLM Call via claude CLI ─────────────────────────────────────────────────
 
 
-def call_llm(prompt: str, model: str = None, effort: str = None, lang: str = None) -> str:
+def call_llm(
+    prompt: str,
+    model: str = None,
+    effort: str = None,
+    lang: str = None,
+    system_prompt: str = None,
+) -> str:
     """Call claude CLI --print. Each call = fresh session.
 
     Args:
@@ -67,6 +205,7 @@ def call_llm(prompt: str, model: str = None, effort: str = None, lang: str = Non
         model: Model override.
         effort: Effort level (low/medium/high/max). Controls reasoning depth.
         lang: Language code for localization (en/ko/ja/zh). Appends language instruction.
+        system_prompt: Optional system prompt (used by system_prompt injection mode).
 
     Returns:
         The model's response text.
@@ -76,6 +215,8 @@ def call_llm(prompt: str, model: str = None, effort: str = None, lang: str = Non
         prompt = f"{prompt}\n\n{LANGUAGES[actual_lang]}"
 
     cmd = ["claude", "--print", "--model", model or MODEL]
+    if system_prompt:
+        cmd.extend(["--system-prompt", system_prompt])
     eff = effort or EFFORT
     if eff and eff != "high":  # high is default, only pass if different
         cmd.extend(["--effort", eff])
@@ -404,28 +545,33 @@ async def call_payment_api(payload: dict, max_retries: int = 5) -> dict:
 
 def method_single_session(task: Task) -> str:
     """Baseline 1: single session with full context."""
+    sys_prompt = get_system_prompt_for_mode(task.context)
+    prompt = build_deep_prompt(task.context, task.prompt)
     return call_llm(
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
-        f"List every bug, risk, or issue you can find. Be specific and technical."
+        f"{prompt}\n\nList every bug, risk, or issue you can find. Be specific and technical.",
+        system_prompt=sys_prompt,
     )
 
 
 def method_second_opinion(task: Task) -> str:
     """Baseline 2: two independent sessions, concatenate answers."""
+    sys_prompt = get_system_prompt_for_mode(task.context)
     prompt = (
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
         f"List every bug, risk, or issue you can find. Be specific and technical."
     )
-    r1 = call_llm(prompt)
-    r2 = call_llm(prompt)
+    r1 = call_llm(prompt, system_prompt=sys_prompt)
+    r2 = call_llm(prompt, system_prompt=sys_prompt)
     return f"=== Opinion 1 ===\n{r1}\n\n=== Opinion 2 ===\n{r2}"
 
 
 def method_ccr(task: Task) -> str:
     """Baseline 3: CCR replication — deep produces, fresh reviews."""
+    sys_prompt = get_system_prompt_for_mode(task.context)
     deep = call_llm(
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
-        f"List every bug, risk, or issue you can find. Be specific and technical."
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.",
+        system_prompt=sys_prompt,
     )
     fresh = call_llm(
         f"{task.prompt}\n\nA colleague produced this analysis:\n\n{deep}\n\n"
@@ -437,17 +583,19 @@ def method_ccr(task: Task) -> str:
 
 def method_symmetric_debate(task: Task) -> str:
     """Baseline 4: symmetric debate — both get full context."""
+    sys_prompt = get_system_prompt_for_mode(task.context)
     prompt = (
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
         f"List every bug, risk, or issue you can find. Be specific and technical."
     )
-    pos_a = call_llm(prompt)
-    pos_b = call_llm(prompt)
+    pos_a = call_llm(prompt, system_prompt=sys_prompt)
+    pos_b = call_llm(prompt, system_prompt=sys_prompt)
     synthesis = call_llm(
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
         f"Two reviewers independently found these issues:\n\n"
         f"=== Reviewer A ===\n{pos_a}\n\n=== Reviewer B ===\n{pos_b}\n\n"
-        f"Synthesize a final combined list. For each point, note agreement or disagreement."
+        f"Synthesize a final combined list. For each point, note agreement or disagreement.",
+        system_prompt=sys_prompt,
     )
     return f"=== Position A ===\n{pos_a}\n\n=== Position B ===\n{pos_b}\n\n=== Synthesis ===\n{synthesis}"
 
@@ -455,11 +603,12 @@ def method_symmetric_debate(task: Task) -> str:
 def method_self_consistency(task: Task) -> str:
     """Baseline 5: 5 independent runs, majority-vote synthesis.
     Same token budget as Ploidy (~5 LLM calls)."""
+    sys_prompt = get_system_prompt_for_mode(task.context)
     prompt = (
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
         f"List every bug, risk, or issue you can find. Be specific and technical."
     )
-    runs = [call_llm(prompt) for _ in range(5)]
+    runs = [call_llm(prompt, system_prompt=sys_prompt) for _ in range(5)]
     synthesis = call_llm(
         "Five independent reviewers analyzed the same code/system.\n\n"
         + "\n\n".join(f"=== Reviewer {i + 1} ===\n{r}" for i, r in enumerate(runs))
@@ -501,10 +650,12 @@ def _compress_failures_only(position: str) -> str:
 def method_semi_fresh_passive(task: Task) -> str:
     """Semi-Fresh (Passive): compressed summary injected into prompt."""
     # Deep position
+    sys_prompt = get_system_prompt_for_mode(task.context)
     deep_pos = call_llm(
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
         f"List every bug, risk, or issue you can find. Be specific and technical.\n"
-        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+        system_prompt=sys_prompt,
     )
 
     # Compress Deep's position
@@ -541,10 +692,12 @@ def method_semi_fresh_passive(task: Task) -> str:
 def method_semi_fresh_active(task: Task) -> str:
     """Semi-Fresh (Active): summary available via explicit retrieval, not injected."""
     # Deep position
+    sys_prompt = get_system_prompt_for_mode(task.context)
     deep_pos = call_llm(
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
         f"List every bug, risk, or issue you can find. Be specific and technical.\n"
-        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+        system_prompt=sys_prompt,
     )
 
     # Compress Deep's position
@@ -588,10 +741,12 @@ def method_semi_fresh_passive_independent(task: Task) -> str:
     If this matches SF-Active's recall → instruction is the driver, not delivery mode.
     If this matches SF-Passive's recall → delivery mode is the driver."""
     # Deep position
+    sys_prompt = get_system_prompt_for_mode(task.context)
     deep_pos = call_llm(
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
         f"List every bug, risk, or issue you can find. Be specific and technical.\n"
-        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+        system_prompt=sys_prompt,
     )
 
     # Compress Deep's position
@@ -632,10 +787,12 @@ def method_semi_fresh_passive_bottom(task: Task) -> str:
     If this matches SF-Active's recall → position (primacy/recency) is the driver.
     If this matches SF-Passive's recall → position doesn't matter, delivery mode does."""
     # Deep position
+    sys_prompt = get_system_prompt_for_mode(task.context)
     deep_pos = call_llm(
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
         f"List every bug, risk, or issue you can find. Be specific and technical.\n"
-        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+        system_prompt=sys_prompt,
     )
 
     # Compress Deep's position
@@ -672,10 +829,12 @@ def method_semi_fresh_passive_bottom(task: Task) -> str:
 def method_semi_fresh_selective(task: Task) -> str:
     """Semi-Fresh (Selective): only failure/uncertainty info provided, not full findings."""
     # Deep position
+    sys_prompt = get_system_prompt_for_mode(task.context)
     deep_pos = call_llm(
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
         f"List every bug, risk, or issue you can find. Be specific and technical.\n"
-        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+        system_prompt=sys_prompt,
     )
 
     # Extract only failures/uncertainties
@@ -711,61 +870,95 @@ def method_semi_fresh_selective(task: Task) -> str:
 
 
 def method_ploidy(task: Task) -> str:
-    """Treatment: Ploidy — asymmetric context structured debate."""
-    # POSITION phase
-    deep_pos = call_llm(
-        f"Context about this code/system:\n{task.context}\n\n{task.prompt}\n\n"
-        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
-        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    """Treatment: Ploidy — asymmetric context structured debate.
+
+    Supports Deep(n) × Fresh(m) sessions to address both:
+    - Event A (context asymmetry): Deep vs Fresh have different information
+    - Event B (stochastic variance): multiple sessions at same depth sample
+      different points from the output distribution
+    """
+    sys_prompt = get_system_prompt_for_mode(task.context)
+    deep_n = DEEP_N
+    fresh_n = FRESH_N
+
+    # POSITION phase — spawn n Deep + m Fresh sessions
+    deep_positions = []
+    for i in range(deep_n):
+        pos = call_llm(
+            f"{build_deep_prompt(task.context, task.prompt)}\n\n"
+            f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+            f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+            system_prompt=sys_prompt,
+        )
+        deep_positions.append(pos)
+
+    fresh_positions = []
+    for i in range(fresh_n):
+        pos = call_llm(
+            f"{task.prompt}\n\n"
+            f"You have NO background context about this system. Review based purely on the code/question itself.\n"
+            f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+            f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+        )
+        fresh_positions.append(pos)
+
+    # Aggregate positions for challenge phase
+    deep_aggregate = "\n\n".join(
+        f"--- Deep Session {i + 1}/{deep_n} ---\n{p}" for i, p in enumerate(deep_positions)
     )
-    fresh_pos = call_llm(
-        f"{task.prompt}\n\n"
-        f"You have NO background context about this system. Review based purely on the code/question itself.\n"
-        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
-        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    fresh_aggregate = "\n\n".join(
+        f"--- Fresh Session {i + 1}/{fresh_n} ---\n{p}" for i, p in enumerate(fresh_positions)
     )
 
-    # CHALLENGE phase
+    # CHALLENGE phase — one representative challenge per side
     deep_challenge = call_llm(
-        f"You previously reviewed this code with full project context and found:\n\n{deep_pos}\n\n"
-        f"Now, a reviewer with NO project context found these issues:\n\n{fresh_pos}\n\n"
+        f"You are an experienced reviewer with full project context. "
+        f"{'Your team' if deep_n > 1 else 'You'} found:\n\n{deep_aggregate}\n\n"
+        f"Now, {'reviewers' if fresh_n > 1 else 'a reviewer'} with NO project context found:\n\n"
+        f"{fresh_aggregate}\n\n"
         f"For EACH of their points, respond with:\n"
         f"- AGREE: valid finding\n"
         f"- CHALLENGE: wrong/misleading given project context, explain why\n"
         f"- SYNTHESIZE: partially right, here's the nuance\n\n"
-        f"Also list anything YOU found that THEY missed."
+        f"Also list anything your side found that they missed."
     )
     fresh_challenge = call_llm(
-        f"You previously reviewed this code with NO project context and found:\n\n{fresh_pos}\n\n"
-        f"Now, a reviewer with deep project context found these issues:\n\n{deep_pos}\n\n"
+        f"You are a fresh reviewer with NO project context. "
+        f"{'Your team' if fresh_n > 1 else 'You'} found:\n\n{fresh_aggregate}\n\n"
+        f"Now, {'reviewers' if deep_n > 1 else 'a reviewer'} with deep project context found:\n\n"
+        f"{deep_aggregate}\n\n"
         f"For EACH of their points, respond with:\n"
         f"- AGREE: valid finding\n"
         f"- CHALLENGE: seems like rationalization or context-anchored bias, explain why\n"
         f"- SYNTHESIZE: partially right, here's the nuance\n\n"
-        f"Also list anything YOU found that THEY missed."
+        f"Also list anything your side found that they missed."
     )
 
     # CONVERGENCE
+    session_desc = f"Deep({deep_n}) × Fresh({fresh_n})"
     convergence = call_llm(
-        f"Two reviewers debated this code/system. Synthesize their debate into a final verdict.\n\n"
-        f"=== Deep Session (has project context) — Position ===\n{deep_pos}\n\n"
-        f"=== Fresh Session (no context) — Position ===\n{fresh_pos}\n\n"
+        f"A {session_desc} debate was held. Synthesize into a final verdict.\n\n"
+        f"=== Deep Sessions (have project context) — Positions ===\n{deep_aggregate}\n\n"
+        f"=== Fresh Sessions (no context) — Positions ===\n{fresh_aggregate}\n\n"
         f"=== Deep challenges Fresh ===\n{deep_challenge}\n\n"
         f"=== Fresh challenges Deep ===\n{fresh_challenge}\n\n"
         f"Produce a final list of ALL confirmed issues. For each:\n"
         f"1. The issue\n"
-        f"2. Who found it (Deep, Fresh, or Both)\n"
+        f"2. Who found it (Deep, Fresh, or Both) and how many sessions found it\n"
         f"3. Whether it was agreed, contested, or synthesized\n"
         f"4. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
     )
 
-    return (
-        f"=== Deep Position ===\n{deep_pos}\n\n"
-        f"=== Fresh Position ===\n{fresh_pos}\n\n"
-        f"=== Deep Challenges Fresh ===\n{deep_challenge}\n\n"
-        f"=== Fresh Challenges Deep ===\n{fresh_challenge}\n\n"
-        f"=== Convergence ===\n{convergence}"
-    )
+    parts = []
+    for i, p in enumerate(deep_positions):
+        parts.append(f"=== Deep Position {i + 1}/{deep_n} ===\n{p}")
+    for i, p in enumerate(fresh_positions):
+        parts.append(f"=== Fresh Position {i + 1}/{fresh_n} ===\n{p}")
+    parts.append(f"=== Deep Challenges Fresh ===\n{deep_challenge}")
+    parts.append(f"=== Fresh Challenges Deep ===\n{fresh_challenge}")
+    parts.append(f"=== Convergence ({session_desc}) ===\n{convergence}")
+
+    return "\n\n".join(parts)
 
 
 # ─── Judge ───────────────────────────────────────────────────────────────────
@@ -830,7 +1023,10 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
     actual_lang = lang or LANGUAGE
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = Path(__file__).parent / "results" / f"{timestamp}_effort-{eff}_lang-{actual_lang}"
+    inj = INJECTION_MODE
+    results_dir = (
+        Path(__file__).parent / "results" / f"{timestamp}_effort-{eff}_lang-{actual_lang}_inj-{inj}"
+    )
     results_dir.mkdir(parents=True, exist_ok=True)
 
     all_results = []
@@ -839,7 +1035,7 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
         print(f"\n{'=' * 60}")
         print(f"Task: {task.name} ({task.id})")
         print(f"Ground truth: {len(task.ground_truth)} known issues")
-        print(f"Effort: {eff} | Language: {actual_lang}")
+        print(f"Effort: {eff} | Language: {actual_lang} | Injection: {inj}")
         print(f"{'=' * 60}")
 
         for method_id, (method_name, method_fn) in methods.items():
@@ -879,6 +1075,9 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
                     "method_name": method_name,
                     "effort": eff,
                     "language": actual_lang,
+                    "injection_mode": INJECTION_MODE,
+                    "deep_n": DEEP_N,
+                    "fresh_n": FRESH_N,
                     "model": MODEL,
                     "found": found,
                     "partial": partial,
@@ -1080,6 +1279,177 @@ def run_language_sweep(task_ids=None, method_ids=None, languages=None):
     return all_lang_results
 
 
+def run_injection_sweep(task_ids=None, method_ids=None, modes=None):
+    """Run experiments across context injection modes.
+
+    Tests whether the *form* of context delivery affects model behavior
+    and debate outcomes, independent of the information content.
+
+    This directly addresses the question: does the same information produce
+    different results when delivered as accumulated memories (memory.md) vs
+    declarative rules (skills.md) vs system instructions vs raw text?
+
+    Hypotheses:
+    - H1: Memory-style injection (accumulated observations) may produce more
+           anchored/sycophantic responses than skills-style (declarative rules),
+           because the model treats "learned observations" as stronger priors
+    - H2: System-prompt injection may create stronger positional authority bias
+           than user-message injection, affecting how readily the model
+           challenges its own context during debate
+    - H3: CLAUDE.md-style injection (project instructions with XML tags) may
+           trigger different compliance behaviors than raw context, as models
+           are trained to treat tagged instructions as authoritative
+    - H4: The interaction between injection mode and context asymmetry may
+           differ — the Fresh session's independence may be more or less
+           valuable depending on how the Deep session's context was framed
+
+    Args:
+        task_ids: Specific task indices to run.
+        method_ids: Specific method keys to run.
+        modes: Injection mode keys to sweep (default: all).
+
+    Returns:
+        Aggregated results across all injection modes.
+    """
+    global INJECTION_MODE
+    sweep_modes = modes or list(INJECTION_MODES.keys())
+    all_inj_results = []
+
+    print(f"\n{'#' * 80}")
+    print(f"INJECTION MODE SWEEP: {sweep_modes}")
+    print(f"{'#' * 80}")
+
+    for mode in sweep_modes:
+        INJECTION_MODE = mode
+        desc = INJECTION_MODES[mode]["description"]
+        print(f"\n\n{'*' * 80}")
+        print(f"  INJECTION MODE: {mode.upper()} — {desc}")
+        print(f"{'*' * 80}")
+
+        results = run_experiment(task_ids, method_ids)
+        for r in results:
+            r["injection_mode"] = mode
+        all_inj_results.extend(results)
+
+    # Cross-mode summary
+    print(f"\n\n{'#' * 80}")
+    print("INJECTION MODE SWEEP SUMMARY")
+    print(f"{'#' * 80}")
+    print(f"{'Mode':<14} {'Method':<22} {'Avg F1':>8} {'Avg Recall':>12} {'Avg Time':>10}")
+    print("-" * 75)
+
+    methods = METHODS if method_ids is None else {k: METHODS[k] for k in method_ids}
+    for mode in sweep_modes:
+        for mid, (mname, _) in methods.items():
+            mrs = [
+                r
+                for r in all_inj_results
+                if r.get("method") == mid and r.get("injection_mode") == mode and "error" not in r
+            ]
+            if mrs:
+                af1 = sum(r["f1"] for r in mrs) / len(mrs)
+                af = sum(r["found"] for r in mrs) / len(mrs)
+                at = sum(r["total_gt"] for r in mrs) / len(mrs)
+                asec = sum(r["elapsed_seconds"] for r in mrs) / len(mrs)
+                print(f"  {mode:<12} {mname:<22} {af1:>8.3f} {af:>5.1f}/{at:.1f} {asec:>8.0f}s")
+
+    # Save sweep results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    sweep_dir = Path(__file__).parent / "results" / f"{timestamp}_injection-sweep"
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    with open(sweep_dir / "injection_sweep_summary.json", "w") as f:
+        json.dump(all_inj_results, f, indent=2, ensure_ascii=False)
+    print(f"\nInjection sweep saved: {sweep_dir}")
+
+    return all_inj_results
+
+
+# Ploidy level names from biology
+PLOIDY_NAMES = {1: "haploid", 2: "diploid", 3: "triploid", 4: "tetraploid"}
+
+
+def run_ploidy_sweep(task_ids=None, method_ids=None, levels=None):
+    """Run experiments across ploidy levels (1n through 4n).
+
+    Tests the interaction between stochastic sampling (Event B) and
+    context asymmetry (Event A). At 1n, each context depth has one
+    session — disagreements could be stochastic or context-driven.
+    At higher ploidy, within-group agreement distinguishes the two:
+    if 3/3 Deep agree but 0/3 Fresh find it, the cause is context,
+    not randomness.
+
+    The biological metaphor is structurally precise:
+    - Chromosome set count = stochastic samples per context depth
+    - Haploid (1n) = minimal, fragile
+    - Diploid (2n) = standard, one backup
+    - Polyploid (3n+) = robust, redundant error correction
+
+    Args:
+        task_ids: Specific task indices to run.
+        method_ids: Specific method keys to run (only 'ploidy' is affected).
+        levels: Ploidy levels to sweep (default: [1, 2, 3, 4]).
+
+    Returns:
+        Aggregated results across all ploidy levels.
+    """
+    global DEEP_N, FRESH_N
+    sweep_levels = levels or [1, 2, 3, 4]
+    all_ploidy_results = []
+
+    print(f"\n{'#' * 80}")
+    print(f"PLOIDY SWEEP: {sweep_levels}")
+    print(f"{'#' * 80}")
+
+    for n in sweep_levels:
+        DEEP_N = n
+        FRESH_N = n
+        name = PLOIDY_NAMES.get(n, f"{n}n-ploid")
+        print(f"\n\n{'*' * 80}")
+        print(f"  PLOIDY: {n}n ({name}) — Deep×{n}, Fresh×{n}")
+        print(f"{'*' * 80}")
+
+        results = run_experiment(task_ids, method_ids)
+        for r in results:
+            r["ploidy"] = n
+            r["ploidy_name"] = name
+        all_ploidy_results.extend(results)
+
+    # Cross-ploidy summary
+    print(f"\n\n{'#' * 80}")
+    print("PLOIDY SWEEP SUMMARY")
+    print(f"{'#' * 80}")
+    print(f"{'Ploidy':<14} {'Method':<22} {'Avg F1':>8} {'Avg Recall':>12} {'Avg Time':>10}")
+    print("-" * 75)
+
+    methods = METHODS if method_ids is None else {k: METHODS[k] for k in method_ids}
+    for n in sweep_levels:
+        name = PLOIDY_NAMES.get(n, f"{n}n")
+        for mid, (mname, _) in methods.items():
+            mrs = [
+                r
+                for r in all_ploidy_results
+                if r.get("method") == mid and r.get("ploidy") == n and "error" not in r
+            ]
+            if mrs:
+                af1 = sum(r["f1"] for r in mrs) / len(mrs)
+                af = sum(r["found"] for r in mrs) / len(mrs)
+                at = sum(r["total_gt"] for r in mrs) / len(mrs)
+                asec = sum(r["elapsed_seconds"] for r in mrs) / len(mrs)
+                print(
+                    f"  {n}n ({name:<8}) {mname:<22} {af1:>8.3f} {af:>5.1f}/{at:.1f} {asec:>8.0f}s"
+                )
+
+    # Save sweep results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    sweep_dir = Path(__file__).parent / "results" / f"{timestamp}_ploidy-sweep"
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    with open(sweep_dir / "ploidy_sweep_summary.json", "w") as f:
+        json.dump(all_ploidy_results, f, indent=2, ensure_ascii=False)
+    print(f"\nPloidy sweep saved: {sweep_dir}")
+
+    return all_ploidy_results
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ploidy Experiment Runner")
     parser.add_argument("--tasks", type=str, help="Task indices, e.g., 0,1,2")
@@ -1119,10 +1489,57 @@ if __name__ == "__main__":
         type=str,
         help="Specific languages for sweep, e.g., en,ko,ja",
     )
+    parser.add_argument(
+        "--injection",
+        type=str,
+        default="raw",
+        choices=list(INJECTION_MODES.keys()),
+        help="Context injection mode (raw/system_prompt/memory/skills/claude_md)",
+    )
+    parser.add_argument(
+        "--injection-sweep",
+        action="store_true",
+        help="Run all injection modes for context delivery analysis",
+    )
+    parser.add_argument(
+        "--injections",
+        type=str,
+        help="Specific injection modes for sweep, e.g., raw,memory,skills",
+    )
+    parser.add_argument(
+        "--deep-n",
+        type=int,
+        default=1,
+        help="Number of Deep sessions (stochastic sampling, default: 1)",
+    )
+    parser.add_argument(
+        "--fresh-n",
+        type=int,
+        default=1,
+        help="Number of Fresh sessions (stochastic sampling, default: 1)",
+    )
+    parser.add_argument(
+        "--ploidy",
+        type=int,
+        default=None,
+        help="Set session count per role (1=haploid, 2=diploid, 3=triploid). Overrides --deep-n and --fresh-n.",
+    )
+    parser.add_argument(
+        "--ploidy-sweep",
+        action="store_true",
+        help="Run ploidy levels 1n through 4n for stochastic sampling analysis",
+    )
     args = parser.parse_args()
     MODEL = args.model
     EFFORT = args.effort
     LANGUAGE = args.lang
+    INJECTION_MODE = args.injection
+    if args.ploidy is not None:
+        DEEP_N = args.ploidy
+        FRESH_N = args.ploidy
+    else:
+        DEEP_N = args.deep_n
+        FRESH_N = args.fresh_n
 
     if args.long:
         from tasks_longcontext import LONG_CONTEXT_TASKS
@@ -1139,5 +1556,10 @@ if __name__ == "__main__":
     elif args.lang_sweep:
         sweep_langs = args.langs.split(",") if args.langs else None
         run_language_sweep(task_ids, method_ids, sweep_langs)
+    elif args.injection_sweep:
+        sweep_modes = args.injections.split(",") if args.injections else None
+        run_injection_sweep(task_ids, method_ids, sweep_modes)
+    elif args.ploidy_sweep:
+        run_ploidy_sweep(task_ids, method_ids)
     else:
         run_experiment(task_ids, method_ids)

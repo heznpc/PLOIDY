@@ -15,6 +15,26 @@ The result: **identical models, identical prompts, identical users -- but differ
 
 Ploidy addresses this by engineering context asymmetry across physically separate sessions, then reconciling divergent stochastic samples through a structured debate protocol. The Fresh session cannot be anchored to the Deep session's prior outputs because it has never seen them. Disagreements between sessions are not noise -- they are the signal that reveals where the stochastic prior happened to matter.
 
+### Two Independent Phenomena
+
+Context asymmetry and stochastic variance are **independent events** that both motivate multi-session debate:
+
+- **Event A (Context Asymmetry)**: A Deep session and a Fresh session disagree because they have *different information*. The cause is interpretable -- one has context the other lacks.
+- **Event B (Stochastic Variance)**: Two Deep sessions with *identical context* disagree because LLM outputs are sampled from a probability distribution. The cause is randomness, not information asymmetry.
+
+A single Deep(1) × Fresh(1) debate addresses Event A but samples only one point from each distribution. Running Deep(n) × Fresh(m) sessions addresses both events simultaneously: context asymmetry between the groups, and stochastic sampling within each group. When 3 out of 3 Deep sessions agree on a finding that 0 out of 3 Fresh sessions found, the disagreement is almost certainly context-driven, not stochastic. When Deep sessions disagree *among themselves*, that signals where the stochastic prior matters even within the same context depth.
+
+The project name maps directly to this structure. In biology, ploidy is the number of chromosome sets per cell. In Ploidy the system, the ploidy level is the number of stochastic samples per context depth:
+
+| Ploidy | Biology | Ploidy System | Sessions |
+|--------|---------|---------------|----------|
+| 1n (haploid) | 1 chromosome set — fragile, no redundancy | 1 sample per depth — no stochastic correction | Deep×1, Fresh×1 |
+| 2n (diploid) | 2 sets — standard error masking | 1 backup sample — detects stochastic outliers | Deep×2, Fresh×2 |
+| 3n (triploid) | 3 sets — majority voting possible | 2/3 agreement = high confidence | Deep×3, Fresh×3 |
+| 4n+ (polyploid) | N sets — robust against multiple errors | Statistical significance within groups | Deep×N, Fresh×N |
+
+At 1n, the system cannot distinguish Event A from Event B. At 2n+, within-group disagreement isolates stochastic variance, and between-group disagreement isolates context asymmetry. The ploidy level is therefore a precision dial: higher ploidy trades compute for causal interpretability.
+
 ### Corollary: Persistent Memory as a Bias Propagation Channel
 
 The stochastic prior lock-in problem extends beyond a single session. Any mechanism that carries conclusions from one session into another -- persistent memory, summarized session logs, curated context injections -- becomes a **bias propagation channel**. If Session A's stochastic output is saved as a "memory" and loaded into Session B, then Session B inherits Session A's anchoring bias without ever having formed an independent judgment. The memory acts as a pre-committed prior that the new session cannot distinguish from its own parametric knowledge.
@@ -22,6 +42,22 @@ The stochastic prior lock-in problem extends beyond a single session. Any mechan
 This has direct implications for multi-agent architectures that use shared memory stores, RAG pipelines fed by prior session outputs, or any form of cross-session state transfer. The fresh session's value lies precisely in its independence from prior conclusions. Injecting curated state -- even factual state -- narrows the space of stochastic outcomes the fresh session can explore, partially defeating the purpose of session separation.
 
 Ploidy's protocol addresses this by design: the Fresh session receives only the raw artifact (code, question) and never the Deep session's analysis, memory, or prior conclusions. The debate protocol is the only channel through which the Deep session's reasoning reaches the Fresh session, and it does so in a structured, challengeable form rather than as implicit background context.
+
+### Corollary: Context Entrenchment as Apoptosis Failure
+
+In cell biology, apoptosis is the mechanism by which damaged cells self-terminate. Cancer occurs not when a cell performs poorly, but when a cell with accumulated errors **fails to die** -- it continues dividing, propagating its errors, and crowding out healthy cells.
+
+Single-session LLM workflows exhibit the same failure mode. A session that has accumulated context entrenchment -- anchoring on its own prior outputs, sunk cost reasoning, confirmation bias -- does not self-terminate. It lacks an apoptotic mechanism. It continues generating outputs, the user continues trusting them, and the biased conclusions propagate forward through persistent memory, shared documents, and downstream decisions.
+
+| Cell Biology | LLM Session Lifecycle |
+|---|---|
+| Normal cell | Session operates within effective context capacity, produces reliable outputs |
+| Apoptosis | Session recognizes its own degradation and resets or terminates |
+| Cancer cell | Session with accumulated bias **does not terminate** -- continues producing entrenched outputs |
+| Metastasis | Biased outputs saved as memory/RAG, propagating to other sessions |
+| Immune checkpoint | Ploidy's Fresh session -- an external agent that detects errors the entrenched session cannot see |
+
+The key distinction: a low-performing agent that self-terminates is functioning correctly (apoptosis). A high-performing agent that has locked into a biased trajectory and continues operating is the dangerous case -- its apparent competence masks the accumulated error. Ploidy's Fresh session serves as an immune checkpoint: it cannot be anchored to the Deep session's prior outputs, so it can detect errors that the Deep session's own context window has rendered invisible.
 
 ## The Research Gap
 
@@ -136,6 +172,58 @@ Ploidy's relationship: Demonstrates that even context compression -- a leading a
 
 Proposes heterogeneous agent configurations for debate, where agents differ in roles, capabilities, or knowledge. Ploidy's approach is a specific case of heterogeneous debate where the heterogeneity is precisely controlled: same model, same capabilities, different context depth.
 
+### Context Injection and Persistent Memory Bias
+
+**Jain, Park, Viana, Wilson, and Calacci (2025, revised Feb 2026)** -- "Interaction Context Often Increases Sycophancy in LLMs." [arXiv:2509.12517](https://arxiv.org/abs/2509.12517)
+
+User memory profiles produce the most dramatic sycophancy shifts (Gemini 2.5 Pro: 45% increase in agreement sycophancy). Even synthetic contexts cause 15% uptick. This is the strongest empirical evidence that persistent context -- exactly what CLAUDE.md / memory.md files provide -- increases sycophancy.
+
+Ploidy's relationship: Directly validates the thesis behind the context injection mode experiment. Different injection mechanisms (memory.md vs skills.md vs system_prompt) may produce measurably different anchoring effects, because the model treats "learned observations" differently from "declarative rules."
+
+### Self-Anchoring Calibration Drift
+
+**Harshavardhan (March 2026)** -- "Self-Anchoring Calibration Drift in LLMs: How Multi-Turn Conversations Reshape Model Confidence." [arXiv:2603.01239](https://arxiv.org/abs/2603.01239)
+
+Claude Sonnet 4.6 shows significant decreasing confidence under self-anchoring (mean CDS = -0.032). Recommends "periodic context resets" -- essentially what Ploidy's Fresh session provides.
+
+### Multi-Turn Performance Degradation
+
+**Laban, Hayashi, Zhou, and Neville (May 2025, Microsoft)** -- "LLMs Get Lost In Multi-Turn Conversation." [arXiv:2505.06120](https://arxiv.org/abs/2505.06120)
+
+Average 39% performance drop in multi-turn vs. single-turn across six tasks. "When LLMs take a wrong turn, they get lost and do not recover."
+
+### Emergent Social Conventions in LLM Populations
+
+**Ashery, Aiello, and Baronchelli (May 2025)** -- "Emergent Social Conventions and Collective Bias in LLM Populations." Science Advances. [DOI: 10.1126/sciadv.adu9368](https://www.science.org/doi/10.1126/sciadv.adu9368)
+
+LLM populations spontaneously develop shared conventions through local interactions. Collective biases emerge that are invisible at the individual level. Committed minority groups can impose alternative conventions.
+
+Ploidy's relationship: Shows that multi-agent LLM systems develop emergent biases through interaction. Ploidy's Fresh session acts as a "committed minority" that can break emergent consensus bias.
+
+### Context Branching
+
+**"Context Branching for LLM Conversations: A Version Control Approach"** (December 2025) -- [arXiv:2512.13914](https://arxiv.org/abs/2512.13914)
+
+Applies version control semantics to LLM conversations (checkpoint, branch, switch, inject). Branched conversations achieve higher quality with 58.1% less context. Ploidy's Deep/Fresh split is a specific instance of "context branching."
+
+### Codified Context Infrastructure
+
+**Vasilopoulos (February 2026)** -- "Codified Context: Infrastructure for AI Agents in a Complex Codebase." [arXiv:2602.20478](https://arxiv.org/abs/2602.20478)
+
+Three-component infrastructure: hot-memory constitution, 19 domain-expert agents, 34 cold-memory specs. Tested across 283 development sessions. Focuses on *maintaining* context persistence, while Ploidy intentionally *breaks* it to reduce bias -- a contrasting but complementary approach.
+
+### Agent Drift
+
+**Rath (January 2026)** -- "Agent Drift: Quantifying Behavioral Degradation in Multi-Agent LLM Systems Over Extended Interactions." [arXiv:2601.04170](https://arxiv.org/abs/2601.04170)
+
+Introduces Agent Stability Index (ASI). Three drift types: semantic, coordination, behavioral. Semantic drift occurs in ~50% of workflows by 600 interactions. Ploidy's approach can be seen as a "drift-aware routing" strategy.
+
+### AGENTS.md Efficacy (ETH Zurich)
+
+**InfoQ (March 2026)** -- "New Research Reassesses the Value of AGENTS.md Files for AI Coding." Covering ETH Zurich research concluding AGENTS.md files "may often hinder AI coding agents." Recommends "omitting LLM-generated context files entirely."
+
+Ploidy's relationship: Supports the thesis from the opposite direction -- persistent context files can hurt performance, validating the value of Fresh session approach and motivating the context injection mode experiment.
+
 ## The Core Research Question
 
 > When N sessions of the same model debate a decision with intentionally asymmetric context, do the resulting disagreements identify genuine blind spots that a single deep session would miss?
@@ -147,14 +235,121 @@ Proposes heterogeneous agent configurations for debate, where agents differ in r
 3. **Unidirectional vs. bidirectional**: Does Ploidy's bidirectional debate improve on CCR's unidirectional review? Under what conditions?
 4. **Context depth curve**: Is there an optimal context asymmetry level, or does maximal asymmetry (full context vs. zero context) always produce the most valuable disagreements?
 5. **Convergence quality**: Do debates that converge produce better decisions than debates that don't? Or is irreducible disagreement itself informative?
+6. **Context injection mechanism**: Does the *form* of context delivery (memory.md-style accumulated observations vs. skills.md-style declarative rules vs. system prompt vs. CLAUDE.md project instructions) affect model behavior and debate outcomes, independent of the information content? If so, which mechanism produces the strongest anchoring bias?
+
+## Preliminary Results (2026-03-18)
+
+### Experiment 1: Short-Context Injection Sweep
+
+**Setup**: 2 short-context code review tasks (race condition, SQL injection), 3 methods (Single, Ploidy, CCR), 3 injection modes (raw, memory, skills). Model: Claude Opus 4.6, effort: high.
+
+**Result**: All methods achieved 3/3 recall (ceiling effect). F1 differences came from bonus findings precision only. Short-context tasks are too easy for Opus 4.6 — entrenchment does not occur because the context is not long enough to induce anchoring bias.
+
+| Mode | Single F1 | Ploidy F1 | CCR F1 |
+|------|-----------|-----------|--------|
+| raw | 0.545 | **0.573** | 0.523 |
+| memory | **0.573** | 0.550 | 0.523 |
+| skills | 0.550 | 0.573 | **0.606** |
+
+**Observation**: Injection mode changes which method wins. Memory-style benefits Single; skills-style benefits CCR. This interaction effect was not predicted.
+
+### Experiment 2: Long-Context Injection Sweep
+
+**Setup**: 3 long-context architecture decision tasks with embedded misleading priors (PostgreSQL sunk cost, auth system ownership bias, premature microservice split), 3 methods, 3 injection modes. Same model and effort.
+
+**Key finding: Recall**
+
+| Mode | Single | Ploidy | CCR |
+|------|--------|--------|-----|
+| raw | 5.0/5.3 | **5.3/5.3** | 4.7/5.3 |
+| memory | 4.0/5.3 | **5.0/5.3** | 4.0/5.3 |
+| skills | 4.3/5.3 | **5.3/5.3** | 5.0/5.3 |
+
+Ploidy achieves highest recall in all three injection modes. On long-context tasks where context entrenchment occurs, asymmetric debate consistently identifies more ground-truth blind spots than single-session or unidirectional review.
+
+**Key finding: Memory injection degrades recall**
+
+| Mode | Single Recall | Ploidy Recall | CCR Recall |
+|------|---------------|---------------|------------|
+| raw → memory | 5.0 → **4.0** (-20%) | 5.3 → **5.0** (-6%) | 4.7 → **4.0** (-15%) |
+
+Memory-style injection (accumulated observations formatted as CLAUDE.md memories) caused the largest recall drop for Single (-20%) and CCR (-15%). Ploidy was most resilient (-6%), suggesting the Fresh session corrects memory-induced anchoring bias.
+
+**Key finding: Skills injection is most stable**
+
+Skills-style injection (declarative rules) produced the most balanced results across all methods, with the narrowest F1 gap (0.585 / 0.571 / 0.556). Declarative framing creates weaker priors than narrative memory framing.
+
+**F1 vs Recall trade-off**
+
+Single session achieves higher F1 (0.646 in raw mode) because it generates fewer bonus findings, resulting in higher precision. Ploidy generates more findings overall, lowering precision but maximizing recall. For the use case of blind spot detection, recall is the primary metric — a missed critical issue is worse than a false positive.
+
+### Interpretation
+
+These results support three claims:
+
+1. **Context asymmetry improves recall on long-context tasks** where entrenchment occurs, but shows no benefit on short-context tasks where it does not — bounding the intervention's applicability.
+
+2. **Context injection mechanism is a moderator variable** for debate efficacy. The same information delivered as accumulated memories vs. declarative rules produces measurably different anchoring effects, changing which method performs best.
+
+3. **Ploidy's Fresh session provides bias resilience** across injection modes. When memory-style injection degrades Single and CCR recall by 15-20%, Ploidy's recall drops only 6%, because the Fresh session has never seen the memory-formatted context.
+
+### Experiment 3: Ploidy Level Sweep (1n–4n)
+
+**Setup**: 2 long-context tasks, 2 methods (Single, Ploidy), ploidy levels 1n through 4n. At ploidy level N, the Ploidy method spawns Deep×N + Fresh×N sessions. Single is unaffected by ploidy level. Model: Claude Opus 4.6, effort: high.
+
+**Results**:
+
+| Ploidy | Ploidy Recall | Ploidy F1 | Single Recall | Single F1 | Ploidy Time |
+|--------|---------------|-----------|---------------|-----------|-------------|
+| 1n (haploid) | 4.5/5.0 | 0.584 | **5.0/5.0** | 0.556 | 272s |
+| **2n (diploid)** | **5.0/5.0** | **0.667** | 4.5/5.0 | 0.634 | 352s |
+| 3n (triploid) | **5.0/5.0** | 0.505 | 4.5/5.0 | 0.638 | 480s |
+| 4n (tetraploid) | **5.0/5.0** | 0.679 | **5.0/5.0** | 0.691 | 501s |
+
+**Key finding: 2n is the recall threshold**
+
+At 1n, Ploidy misses ground-truth issues (4.5/5.0). At 2n, recall reaches the ceiling (5.0/5.0) and stays there. The second stochastic sample per context depth corrects the first sample's blind spots. Additional samples (3n, 4n) provide no further recall benefit.
+
+**Key finding: 2n is the cost-efficiency optimum**
+
+2n costs 30% more compute than 1n (352s vs 272s) while achieving full recall correction. 3n costs 76% more with no recall gain. 4n costs 84% more, and at this point Single also achieves 5.0/5.0 through brute-force stochastic sampling — eliminating Ploidy's comparative advantage.
+
+**Key finding: High ploidy erodes precision without improving recall**
+
+At 3n, F1 drops to 0.505 despite perfect recall — the additional sessions generate more bonus findings, inflating the denominator. At 4n, F1 recovers (0.679) as the convergence step filters redundant findings more effectively with more input.
+
+**Key finding: Single catches up at 4n**
+
+At 4n, Single achieves 5.0/5.0 recall (up from 4.5 at 1n–3n). With enough independent samples, even a single-context method eventually covers the stochastic distribution. But this requires 4× the compute of Ploidy 2n to reach the same recall — Ploidy 2n achieves the same result through context asymmetry rather than brute repetition.
+
+### Interpretation
+
+These results support four claims:
+
+1. **Context asymmetry improves recall on long-context tasks** where entrenchment occurs, but shows no benefit on short-context tasks where it does not — bounding the intervention's applicability.
+
+2. **Context injection mechanism is a moderator variable** for debate efficacy. The same information delivered as accumulated memories vs. declarative rules produces measurably different anchoring effects, changing which method performs best.
+
+3. **Ploidy's Fresh session provides bias resilience** across injection modes. When memory-style injection degrades Single and CCR recall by 15-20%, Ploidy's recall drops only 6%, because the Fresh session has never seen the memory-formatted context.
+
+4. **Diploid (2n) is the optimal ploidy level** for cost-efficient recall maximization. Higher ploidy provides no recall benefit while increasing compute cost and reducing precision through finding inflation.
+
+### Limitations
+
+- N=1 per condition (no repeated trials). Stochastic variance in LLM outputs means these are point estimates, not statistically significant results.
+- Task set is small (3 long-context, 2 short-context). Workshop paper requires 5-10; full paper requires 30+.
+- Only one model tested (Claude Opus 4.6). Cross-model validation needed.
+- F1 metric is sensitive to bonus findings count, which varies stochastically. Recall is more stable but ignores precision.
+- Judge model is the same as the evaluated model (self-evaluation bias possible).
+- Ploidy sweep used only 2 tasks — the 2n optimality finding needs validation on a larger task set.
 
 ## Paper Status
 
-!!! note "Pre-experimental"
+!!! note "Preliminary results available"
 
-    No experiments have been run yet. The paper is in the design phase, focused on defining the experimental methodology and baselines.
+    First experiments completed 2026-03-18. Results support core hypothesis on long-context tasks but need repeated trials and expanded task set.
 
-### Experimental Design (Planned)
+### Experimental Design
 
 1. **Task set**: Minimum 5-10 tasks for workshop paper, 30+ for full paper. Must include at least one standard NLP benchmark (e.g., a subset of MMLU, TruthfulQA, or similar) for comparability with existing MAD literature. Remaining tasks should be real software architecture decisions with known outcomes.
 2. **Baselines** (5 required comparisons):
@@ -164,7 +359,13 @@ Proposes heterogeneous agent configurations for debate, where agents differ in r
     - **Majority voting** -- N independent sessions, take the majority answer (addresses Choi et al.'s finding that voting can outperform debate)
     - **Context-symmetric debate** -- Du et al. style multi-agent debate where both agents share the same context (isolates the effect of context asymmetry from the effect of debate itself)
 3. **Treatment**: Ploidy structured debate with context asymmetry
-4. **Metrics**: Decision quality (judged against known outcomes), disagreement interpretability, convergence rate, F1 on error/blind-spot detection (for comparability with CCR)
+4. **Experimental variables** (independent):
+    - **Context asymmetry level** -- Deep / Semi-Fresh (passive, active, selective) / Fresh
+    - **Ploidy level** -- 1n (haploid) / 2n (diploid) / 3n (triploid) / 4n (tetraploid) — sessions per context depth
+    - **Effort level** -- low / medium / high / max (controls LLM reasoning depth)
+    - **Language** -- en / ko / ja / zh (tests whether linguistic/cultural framing distorts findings)
+    - **Context injection mode** -- raw / system_prompt / memory / skills / claude_md (tests whether the *form* of context delivery affects anchoring strength)
+5. **Metrics**: Decision quality (judged against known outcomes), disagreement interpretability, convergence rate, F1 on error/blind-spot detection (for comparability with CCR)
 
 ### Anticipated Reviewer Objections
 

@@ -5,14 +5,29 @@ Defines the data structures for debate sessions:
 - Session context (what each session knows)
 - Context delivery modes (passive, active)
 
-The key design principle: sessions are assigned different context depths
-along the Context Asymmetry Spectrum. A deep session gets full context
-(project history, prior decisions, accumulated knowledge). A semi-fresh
-session gets compressed context (structured digest of prior analysis).
-A fresh session gets deliberately limited context (just the decision
-prompt and essential background). This N-ary asymmetry is what makes
-the debate productive -- ploidy refers to the general concept of
-chromosome set count, supporting any number of sessions.
+Two independent phenomena motivate multi-session debate:
+
+1. **Context asymmetry** (Event A): Sessions at different context depths
+   (Deep vs Semi-Fresh vs Fresh) disagree because they have different
+   information. Disagreements are interpretable -- one has context the
+   other lacks.
+
+2. **Stochastic variance** (Event B): Sessions at the SAME context depth
+   produce different outputs due to sampling randomness. Even Deep₁ and
+   Deep₂ with identical context may reach opposite conclusions. This is
+   the "probability lottery" problem -- a single session locks into one
+   stochastic trajectory.
+
+These are independent events. A debate group may contain:
+- Deep(n) × Fresh(m): n experienced + m fresh sessions, addressing BOTH
+  context asymmetry (Deep vs Fresh) and stochastic variance (n>1 or m>1
+  samples from the same context depth)
+- Deep(1) × Fresh(1): minimal asymmetric debate (current default)
+- Deep(3): three sessions with identical context, pure stochastic sampling
+
+The ploidy metaphor reflects this: in a mixed-ploidy population, diversity
+comes from BOTH different chromosome counts (context asymmetry) AND
+variation within the same ploidy level (stochastic variance).
 """
 
 from dataclasses import dataclass, field
