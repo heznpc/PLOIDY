@@ -43,8 +43,7 @@ async def _get_client():
         from openai import AsyncOpenAI
     except ImportError:
         raise ImportError(
-            "openai package required for v0.2 API fallback. "
-            "Install with: pip install ploidy[api]"
+            "openai package required for v0.2 API fallback. Install with: pip install ploidy[api]"
         )
 
     kwargs = {"api_key": _API_KEY or "not-needed"}

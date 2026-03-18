@@ -764,14 +764,10 @@ async def debate_auto(
             is_api_available,
         )
     except ImportError:
-        raise PloidyError(
-            "API client not available. Install with: pip install ploidy[api]"
-        )
+        raise PloidyError("API client not available. Install with: pip install ploidy[api]")
 
     if not is_api_available():
-        raise PloidyError(
-            "API not configured. Set PLOIDY_API_BASE_URL environment variable."
-        )
+        raise PloidyError("API not configured. Set PLOIDY_API_BASE_URL environment variable.")
 
     store = await _init()
 
@@ -823,7 +819,10 @@ async def debate_auto(
 
     logger.info(
         "Auto-debate %s: experienced=%s, %s=%s",
-        debate_id, exp_id, fresh_role, auto_id,
+        debate_id,
+        exp_id,
+        fresh_role,
+        auto_id,
     )
 
     # 3. Generate positions
@@ -913,7 +912,8 @@ async def debate_auto(
 
     logger.info(
         "Auto-debate %s complete (confidence=%.2f)",
-        debate_id, result.confidence,
+        debate_id,
+        result.confidence,
     )
 
     return {
