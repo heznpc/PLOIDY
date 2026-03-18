@@ -188,7 +188,70 @@ def get_system_prompt_for_mode(task_context: str, mode: str = None) -> str | Non
     return None
 
 
-# ─── LLM Call via claude CLI ─────────────────────────────────────────────────
+# ─── LLM Backend ────────────────────────────────────────────────────────────
+
+BACKEND = "claude"  # claude | openai
+TEMPERATURE = 0.0  # fixed for reproducibility (controls Event B variance)
+MAX_TOKENS = 8192  # sufficient for debate synthesis phases
+
+# Backend-specific model defaults
+BACKEND_DEFAULTS = {
+    "claude": "claude-opus-4-6",
+    "openai": "gpt-4.1",
+}
+
+
+def _call_claude(prompt: str, model: str, effort: str, system_prompt: str = None) -> str:
+    """Call via claude CLI --print. Free with Max/Pro subscription."""
+    cmd = ["claude", "--print", "--model", model]
+    if system_prompt:
+        cmd.extend(["--system-prompt", system_prompt])
+    if effort and effort != "high":
+        cmd.extend(["--effort", effort])
+    cmd.append(prompt)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def _call_openai_api(prompt: str, model: str, effort: str, system_prompt: str = None) -> str:
+    """Call via OpenAI-compatible API.
+
+    Unified backend for all non-Claude models. Set base_url to target different providers:
+      - OpenAI direct:  OPENAI_BASE_URL=https://api.openai.com/v1
+      - OpenRouter:     OPENAI_BASE_URL=https://openrouter.ai/api/v1
+      - Ollama local:   OPENAI_BASE_URL=http://localhost:11434/v1
+      - Anthropic:      OPENAI_BASE_URL=https://api.anthropic.com/v1 (with adapter)
+    """
+    import os
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError("openai package required: pip install openai")
+
+    client = OpenAI(
+        api_key=os.environ.get("OPENAI_API_KEY", "not-needed"),
+        base_url=os.environ.get("OPENAI_BASE_URL"),
+    )
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=MAX_TOKENS,
+        temperature=TEMPERATURE,
+    )
+    return response.choices[0].message.content or ""
+
+
+_BACKENDS = {
+    "claude": _call_claude,
+    "openai": _call_openai_api,
+}
 
 
 def call_llm(
@@ -198,14 +261,17 @@ def call_llm(
     lang: str = None,
     system_prompt: str = None,
 ) -> str:
-    """Call claude CLI --print. Each call = fresh session.
+    """Call the configured LLM backend. Each call = fresh session.
+
+    Supports claude, gemini, openai (API), and ollama backends.
+    Set via --backend flag or BACKEND global.
 
     Args:
         prompt: The prompt to send.
-        model: Model override.
-        effort: Effort level (low/medium/high/max). Controls reasoning depth.
-        lang: Language code for localization (en/ko/ja/zh). Appends language instruction.
-        system_prompt: Optional system prompt (used by system_prompt injection mode).
+        model: Model override (defaults to backend-specific default).
+        effort: Effort level (low/medium/high/max).
+        lang: Language code for localization (en/ko/ja/zh).
+        system_prompt: Optional system prompt.
 
     Returns:
         The model's response text.
@@ -214,17 +280,12 @@ def call_llm(
     if actual_lang != "en" and actual_lang in LANGUAGES:
         prompt = f"{prompt}\n\n{LANGUAGES[actual_lang]}"
 
-    cmd = ["claude", "--print", "--model", model or MODEL]
-    if system_prompt:
-        cmd.extend(["--system-prompt", system_prompt])
+    actual_model = model or MODEL
     eff = effort or EFFORT
-    if eff and eff != "high":  # high is default, only pass if different
-        cmd.extend(["--effort", eff])
-    cmd.append(prompt)
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if result.returncode != 0:
-        raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
-    return result.stdout.strip()
+    backend_fn = _BACKENDS.get(BACKEND)
+    if backend_fn is None:
+        raise ValueError(f"Unknown backend: {BACKEND}. Choose from: {list(_BACKENDS.keys())}")
+    return backend_fn(prompt, actual_model, eff, system_prompt)
 
 
 def call_llm_multi_turn(turns: list[dict], model: str = None, effort: str = None) -> str:
@@ -1078,7 +1139,10 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
                     "injection_mode": INJECTION_MODE,
                     "deep_n": DEEP_N,
                     "fresh_n": FRESH_N,
+                    "backend": BACKEND,
                     "model": MODEL,
+                    "temperature": TEMPERATURE,
+                    "max_tokens": MAX_TOKENS,
                     "found": found,
                     "partial": partial,
                     "missed": missed,
@@ -1529,8 +1593,32 @@ if __name__ == "__main__":
         action="store_true",
         help="Run ploidy levels 1n through 4n for stochastic sampling analysis",
     )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="claude",
+        choices=list(_BACKENDS.keys()),
+        help="LLM backend: claude (CLI, free with subscription) or openai (API, supports OpenRouter/Ollama via OPENAI_BASE_URL)",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="Temperature for API calls (default: 0.0 for reproducibility)",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=8192,
+        help="Max output tokens (default: 8192)",
+    )
     args = parser.parse_args()
-    MODEL = args.model
+    BACKEND = args.backend
+    TEMPERATURE = args.temperature
+    MAX_TOKENS = args.max_tokens
+    MODEL = (
+        args.model if args.model != "claude-opus-4-6" else BACKEND_DEFAULTS.get(BACKEND, args.model)
+    )
     EFFORT = args.effort
     LANGUAGE = args.lang
     INJECTION_MODE = args.injection

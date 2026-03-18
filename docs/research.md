@@ -43,6 +43,14 @@ This has direct implications for multi-agent architectures that use shared memor
 
 Ploidy's protocol addresses this by design: the Fresh session receives only the raw artifact (code, question) and never the Deep session's analysis, memory, or prior conclusions. The debate protocol is the only channel through which the Deep session's reasoning reaches the Fresh session, and it does so in a structured, challengeable form rather than as implicit background context.
 
+### Corollary: Context Injection as Pseudo-Fine-Tuning
+
+Context injection and fine-tuning are technically distinct mechanisms -- the former modifies input, the latter modifies model weights. Context is ephemeral (lost on session reset); fine-tuning is permanent. However, the behavioral boundary is blurring. Persistent context files (CLAUDE.md, memory.md) that auto-load every session function as de facto permanent context. In-context learning can shift model behavior to a degree comparable to fine-tuning. RAG pipelines inject external knowledge every call.
+
+The critical insight for Ploidy is that the *format* of context injection modulates how strongly the model treats the information as internalized knowledge versus external reference. Memory-style injection (accumulated observations: "We tried X and it failed", "The team decided Y") mimics the behavioral effects of fine-tuning within a session -- the model treats accumulated observations as internalized knowledge rather than external input, producing stronger anchoring than declarative rule injection. Skills-style injection (declarative rules: "RULE: always check for X") is treated as external constraints, producing weaker priors.
+
+This is why injection mode is an independent variable in our experiments: it controls the degree to which context *acts like* fine-tuning, even though it technically is not. A Fresh session can escape context-induced bias precisely because context is not weight -- remove it and the model reverts. Fine-tuned bias, by contrast, cannot be escaped through session separation.
+
 ### Corollary: Context Entrenchment as Apoptosis Failure
 
 In cell biology, apoptosis is the mechanism by which damaged cells self-terminate. Cancer occurs not when a cell performs poorly, but when a cell with accumulated errors **fails to die** -- it continues dividing, propagating its errors, and crowding out healthy cells.
@@ -334,14 +342,46 @@ These results support four claims:
 
 4. **Diploid (2n) is the optimal ploidy level** for cost-efficient recall maximization. Higher ploidy provides no recall benefit while increasing compute cost and reducing precision through finding inflation.
 
+### Experiment 5: Cross-Model Validation (Opus vs Sonnet)
+
+**Setup**: 2 long-context tasks, 2 methods (Single, Ploidy 2n), Claude Sonnet 4.6 vs Claude Opus 4.6. Same tasks, same ploidy level, same injection mode (raw).
+
+**Results**:
+
+| Task | Method | Opus Recall | Sonnet Recall |
+|------|--------|-------------|---------------|
+| DB migration (abstract judgment) | Single | 5.0/5 | 2/5 (+2P, 1M) |
+| DB migration (abstract judgment) | Ploidy 2n | **5.0/5** | 2/5 (+1P, **2M**) |
+| Auth overhaul (concrete technical) | Single | 5/5 | **5/5** |
+| Auth overhaul (concrete technical) | Ploidy 2n | 5/5 | **5/5** |
+
+| Metric | Opus 2n | Sonnet 2n |
+|--------|---------|-----------|
+| **Avg Recall** | **5.0/5** | 3.5/5 |
+| **Avg F1** | **0.667** | 0.510 |
+| **Avg Time** | 352s | 414s |
+
+**Key finding: Minimum capability threshold**
+
+Context asymmetry cannot compensate for insufficient base model capability. On the DB migration task — which requires recognizing sunk cost fallacy, anchor bias, and abstract socio-technical judgment — Sonnet's Ploidy 2n (2/5, 2 missed) underperforms Opus's Single session (5/5). The Fresh session in Sonnet's debate lacks the reasoning capacity to generate useful challenges, injecting noise rather than constructive critique.
+
+**Key finding: Task-abstraction gradient**
+
+The effect is task-dependent. On the auth overhaul task — which requires identifying concrete technical vulnerabilities (bus factor=1, HS256 weakness, migration risk) — Sonnet achieves 5/5 regardless of method. This reveals a task-abstraction gradient: context-asymmetric debate is upper-bounded by the base model's capacity to reason about the specific class of findings. Abstract judgment requires frontier-class models; concrete technical identification works across model sizes.
+
+**Key finding: Weak Fresh sessions can be adversarial**
+
+When the base model lacks sufficient capability, the Fresh session's zero-context position may degrade rather than improve the outcome. Sonnet Ploidy 2n (2.5/5 effective) slightly underperforms Sonnet Single (3.0/5 effective) on the DB migration task — the Fresh session's inability to reason about abstract biases produces challenges that distract rather than correct.
+
 ### Limitations
 
 - N=1 per condition (no repeated trials). Stochastic variance in LLM outputs means these are point estimates, not statistically significant results.
 - Task set is small (3 long-context, 2 short-context). Workshop paper requires 5-10; full paper requires 30+.
-- Only one model tested (Claude Opus 4.6). Cross-model validation needed.
+- Cross-model validation limited to two models in the same family (Opus/Sonnet). Different model families (GPT, Gemini) needed.
 - F1 metric is sensitive to bonus findings count, which varies stochastically. Recall is more stable but ignores precision.
 - Judge model is the same as the evaluated model (self-evaluation bias possible).
 - Ploidy sweep used only 2 tasks — the 2n optimality finding needs validation on a larger task set.
+- Temperature not controllable via Claude CLI — experiments ran at server-default sampling parameters.
 
 ## Paper Status
 
