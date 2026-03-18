@@ -18,9 +18,7 @@ from pathlib import Path
 logger = logging.getLogger("ploidy.dashboard")
 
 _DASH_PORT = int(os.environ.get("PLOIDY_DASH_PORT", "8766"))
-_DB_PATH = Path(
-    os.environ.get("PLOIDY_DB_PATH", str(Path.home() / ".ploidy" / "ploidy.db"))
-)
+_DB_PATH = Path(os.environ.get("PLOIDY_DB_PATH", str(Path.home() / ".ploidy" / "ploidy.db")))
 
 # ---------------------------------------------------------------------------
 # HTML Templates (inline to avoid external dependencies)
@@ -200,19 +198,13 @@ async def _fetch_stats() -> dict:
         cursor = await db.execute("SELECT COUNT(*) as n FROM debates")
         stats["total_debates"] = (await cursor.fetchone())["n"]
 
-        cursor = await db.execute(
-            "SELECT COUNT(*) as n FROM debates WHERE status = 'complete'"
-        )
+        cursor = await db.execute("SELECT COUNT(*) as n FROM debates WHERE status = 'complete'")
         stats["completed"] = (await cursor.fetchone())["n"]
 
-        cursor = await db.execute(
-            "SELECT COUNT(*) as n FROM debates WHERE status = 'active'"
-        )
+        cursor = await db.execute("SELECT COUNT(*) as n FROM debates WHERE status = 'active'")
         stats["active"] = (await cursor.fetchone())["n"]
 
-        cursor = await db.execute(
-            "SELECT AVG(confidence) as avg_conf FROM convergence"
-        )
+        cursor = await db.execute("SELECT AVG(confidence) as avg_conf FROM convergence")
         row = await cursor.fetchone()
         stats["avg_confidence"] = round(row["avg_conf"] or 0, 3)
 
@@ -266,9 +258,7 @@ def _render_debate_detail(d: dict) -> str:
     for s in d.get("sessions", []):
         role_map[s["id"]] = s["role"]
         sessions_html += (
-            f'<div class="card">'
-            f"<strong>{s['role'].capitalize()}</strong> &mdash; {s['id']}"
-            f"</div>"
+            f'<div class="card"><strong>{s["role"].capitalize()}</strong> &mdash; {s["id"]}</div>'
         )
 
     timeline_html = ""
@@ -310,9 +300,7 @@ def _render_debate_detail(d: dict) -> str:
             pass
 
         synthesis = conv.get("synthesis", "")
-        convergence_html += (
-            f"<h3>Synthesis</h3><pre>{synthesis[:2000]}</pre></div>"
-        )
+        convergence_html += f"<h3>Synthesis</h3><pre>{synthesis[:2000]}</pre></div>"
 
     return _render(
         f'<div class="card"><h2>Debate: {d["id"]}</h2>'
@@ -409,32 +397,40 @@ async def app(scope, receive, send):
 
 async def _send_response(send, status: int, body: str):
     """Send an HTML response."""
-    await send({
-        "type": "http.response.start",
-        "status": status,
-        "headers": [
-            [b"content-type", b"text/html; charset=utf-8"],
-        ],
-    })
-    await send({
-        "type": "http.response.body",
-        "body": body.encode("utf-8"),
-    })
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                [b"content-type", b"text/html; charset=utf-8"],
+            ],
+        }
+    )
+    await send(
+        {
+            "type": "http.response.body",
+            "body": body.encode("utf-8"),
+        }
+    )
 
 
 async def _send_json(send, status: int, data):
     """Send a JSON response."""
-    await send({
-        "type": "http.response.start",
-        "status": status,
-        "headers": [
-            [b"content-type", b"application/json"],
-        ],
-    })
-    await send({
-        "type": "http.response.body",
-        "body": json.dumps(data, ensure_ascii=False, default=str).encode("utf-8"),
-    })
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                [b"content-type", b"application/json"],
+            ],
+        }
+    )
+    await send(
+        {
+            "type": "http.response.body",
+            "body": json.dumps(data, ensure_ascii=False, default=str).encode("utf-8"),
+        }
+    )
 
 
 def main():

@@ -913,9 +913,7 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
     print(f"\n\n{'=' * 80}")
     print(f"RESULTS (effort={eff})")
     print(f"{'=' * 80}")
-    print(
-        f"{'Task':<32} {'Method':<22} {'Found':>5} {'Part':>5} {'Miss':>5} {'F1':>7}"
-    )
+    print(f"{'Task':<32} {'Method':<22} {'Found':>5} {'Part':>5} {'Miss':>5} {'F1':>7}")
     print("-" * 80)
     for r in all_results:
         if "error" not in r:
@@ -994,9 +992,7 @@ def run_effort_sweep(task_ids=None, method_ids=None, efforts=None):
                 af = sum(r["found"] for r in mrs) / len(mrs)
                 at = sum(r["total_gt"] for r in mrs) / len(mrs)
                 asec = sum(r["elapsed_seconds"] for r in mrs) / len(mrs)
-                print(
-                    f"  {eff:<8} {mname:<22} {af1:>8.3f} {af:>5.1f}/{at:.1f} {asec:>8.0f}s"
-                )
+                print(f"  {eff:<8} {mname:<22} {af1:>8.3f} {af:>5.1f}/{at:.1f} {asec:>8.0f}s")
 
     # Save sweep results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1055,9 +1051,7 @@ def run_language_sweep(task_ids=None, method_ids=None, languages=None):
     print(f"\n\n{'#' * 80}")
     print("LANGUAGE SWEEP SUMMARY")
     print(f"{'#' * 80}")
-    print(
-        f"{'Lang':<6} {'Method':<22} {'Avg F1':>8} {'Avg Recall':>12} {'Avg Time':>10}"
-    )
+    print(f"{'Lang':<6} {'Method':<22} {'Avg F1':>8} {'Avg Recall':>12} {'Avg Time':>10}")
     print("-" * 70)
 
     methods = METHODS if method_ids is None else {k: METHODS[k] for k in method_ids}
@@ -1066,19 +1060,14 @@ def run_language_sweep(task_ids=None, method_ids=None, languages=None):
             mrs = [
                 r
                 for r in all_lang_results
-                if r.get("method") == mid
-                and r.get("language") == lang_code
-                and "error" not in r
+                if r.get("method") == mid and r.get("language") == lang_code and "error" not in r
             ]
             if mrs:
                 af1 = sum(r["f1"] for r in mrs) / len(mrs)
                 af = sum(r["found"] for r in mrs) / len(mrs)
                 at = sum(r["total_gt"] for r in mrs) / len(mrs)
                 asec = sum(r["elapsed_seconds"] for r in mrs) / len(mrs)
-                print(
-                    f"  {lang_code:<4} {mname:<22} {af1:>8.3f} "
-                    f"{af:>5.1f}/{at:.1f} {asec:>8.0f}s"
-                )
+                print(f"  {lang_code:<4} {mname:<22} {af1:>8.3f} {af:>5.1f}/{at:.1f} {asec:>8.0f}s")
 
     # Save sweep results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

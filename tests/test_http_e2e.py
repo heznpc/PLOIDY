@@ -79,10 +79,14 @@ def main():
         print(f"Fresh MCP session: {fresh_sid[:16]}...")
 
         # 2. Start debate
-        start = call_tool(deep_sid, "debate_start", {
-            "prompt": "Monorepo vs polyrepo for 3 teams, 12 microservices?",
-            "context_documents": ["Shared auth lib, cross-team deps"],
-        })
+        start = call_tool(
+            deep_sid,
+            "debate_start",
+            {
+                "prompt": "Monorepo vs polyrepo for 3 teams, 12 microservices?",
+                "context_documents": ["Shared auth lib, cross-team deps"],
+            },
+        )
         debate_id = start["debate_id"]
         exp_id = start["session_id"]
         print(f"\nDebate started: {debate_id}")
@@ -95,18 +99,26 @@ def main():
         print(f"Fresh sees prompt: {join['prompt'][:50]}...")
 
         # 4. Positions
-        pos1 = call_tool(deep_sid, "debate_position", {
-            "session_id": exp_id,
-            "content": "Monorepo. Shared auth lib + cross-team deps "
-                       "= version sync nightmare in polyrepo.",
-        })
+        pos1 = call_tool(
+            deep_sid,
+            "debate_position",
+            {
+                "session_id": exp_id,
+                "content": "Monorepo. Shared auth lib + cross-team deps "
+                "= version sync nightmare in polyrepo.",
+            },
+        )
         print(f"\nExp position: phase={pos1['phase']}, all_in={pos1['all_positions_in']}")
 
-        pos2 = call_tool(fresh_sid, "debate_position", {
-            "session_id": fresh_id,
-            "content": "Polyrepo. Independent CI/CD per service. "
-                       "Monorepo = merge conflicts + slow builds.",
-        })
+        pos2 = call_tool(
+            fresh_sid,
+            "debate_position",
+            {
+                "session_id": fresh_id,
+                "content": "Polyrepo. Independent CI/CD per service. "
+                "Monorepo = merge conflicts + slow builds.",
+            },
+        )
         print(f"Fresh position: phase={pos2['phase']}, all_in={pos2['all_positions_in']}")
 
         # 5. Status
@@ -116,26 +128,34 @@ def main():
             print(f"  {s['role']}: {s['session_id'][:24]}...")
 
         # 6. Challenges
-        ch1 = call_tool(deep_sid, "debate_challenge", {
-            "session_id": exp_id,
-            "content": "Polyrepo ignores shared auth. 12 repos = 12 PRs per security patch.",
-            "action": "challenge",
-        })
+        ch1 = call_tool(
+            deep_sid,
+            "debate_challenge",
+            {
+                "session_id": exp_id,
+                "content": "Polyrepo ignores shared auth. 12 repos = 12 PRs per security patch.",
+                "action": "challenge",
+            },
+        )
         print(f"\nExp challenge: action={ch1['action']}")
 
-        ch2 = call_tool(fresh_sid, "debate_challenge", {
-            "session_id": fresh_id,
-            "content": "Extract shared auth as versioned package "
-                       "on private registry. No monorepo needed.",
-            "action": "propose_alternative",
-        })
+        ch2 = call_tool(
+            fresh_sid,
+            "debate_challenge",
+            {
+                "session_id": fresh_id,
+                "content": "Extract shared auth as versioned package "
+                "on private registry. No monorepo needed.",
+                "action": "propose_alternative",
+            },
+        )
         print(f"Fresh challenge: action={ch2['action']}")
 
         # 7. Converge
         result = call_tool(deep_sid, "debate_converge", {"debate_id": debate_id})
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("CONVERGENCE RESULT")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"Phase: {result['phase']}")
         print(f"Confidence: {result['confidence']}")
         print(f"Points: {len(result['points'])}")
@@ -145,12 +165,12 @@ def main():
 
         # 8. History
         history = call_tool(deep_sid, "debate_history", {})
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"DEBATE HISTORY: {history['total']} debate(s)")
         for d in history["debates"]:
             print(f"  [{d['status']}] {d['id']}: {d['prompt'][:50]}")
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("E2E TEST PASSED")
 
     finally:
