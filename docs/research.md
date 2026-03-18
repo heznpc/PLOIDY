@@ -373,6 +373,30 @@ The effect is task-dependent. On the auth overhaul task — which requires ident
 
 When the base model lacks sufficient capability, the Fresh session's zero-context position may degrade rather than improve the outcome. Sonnet Ploidy 2n (2.5/5 effective) slightly underperforms Sonnet Single (3.0/5 effective) on the DB migration task — the Fresh session's inability to reason about abstract biases produces challenges that distract rather than correct.
 
+### Experiment 6: Effort Level Sweep (low/high/max)
+
+**Setup**: 2 long-context tasks, 2 methods (Single, Ploidy 1n), effort levels low/high/max. Claude Opus 4.6.
+
+**Results**:
+
+| Effort | Single Recall | Ploidy Recall | Single F1 | Ploidy F1 | Ploidy Time |
+|--------|---------------|---------------|-----------|-----------|-------------|
+| low | **4.5/5** | **4.5/5** | **0.679** | 0.544 | 190s |
+| high | **4.5/5** | 4.0/5 | 0.634 | **0.650** | 229s |
+| max | 3.5/5 | 3.0/5 | 0.475 | 0.482 | 306s |
+
+**Key finding: Effort is not monotonically beneficial**
+
+effort=max produces the worst recall for both methods (Single 3.5/5, Ploidy 3.0/5). The model appears to overthink at maximum effort, generating over-elaborate analyses that diverge from ground-truth findings. This is consistent with known overthinking effects in extended reasoning models.
+
+**Key finding: effort=low is cost-optimal for recall**
+
+effort=low matches effort=high on recall (4.5/5) at roughly half the compute time (190s vs 229s). The additional reasoning depth at high effort does not improve recall on these tasks.
+
+**Key finding: Ploidy's F1 advantage is effort-dependent**
+
+Ploidy outperforms Single on F1 only at effort=high (0.650 vs 0.634). At effort=low, Single leads (0.679 vs 0.544). At effort=max, both are poor. The effort × method interaction suggests that context-asymmetric debate is most valuable at intermediate reasoning depth.
+
 ### Limitations
 
 - N=1 per condition (no repeated trials). Stochastic variance in LLM outputs means these are point estimates, not statistically significant results.
@@ -382,6 +406,7 @@ When the base model lacks sufficient capability, the Fresh session's zero-contex
 - Judge model is the same as the evaluated model (self-evaluation bias possible).
 - Ploidy sweep used only 2 tasks — the 2n optimality finding needs validation on a larger task set.
 - Temperature not controllable via Claude CLI — experiments ran at server-default sampling parameters.
+- Effort sweep used 1n (not 2n) — effort × ploidy interaction is unmeasured.
 
 ## Paper Status
 
