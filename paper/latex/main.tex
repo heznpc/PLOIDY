@@ -129,10 +129,16 @@ Large-scale agent simulations (e.g., AgentSociety~\citep{pang2025agentsociety} w
 
 Jain et al.~\citep{jain2025sycophancy} showed that user memory profiles increase agreement sycophancy by up to 45\% (Gemini~2.5~Pro), with even synthetic contexts causing 15\% uptick. Harshavardhan~\citep{harshavardhan2026sacd} documented self-anchoring calibration drift in multi-turn conversations: Claude Sonnet~4.6 shows significant decreasing confidence under self-anchoring. Laban et al.~\citep{laban2025lost} reported 39\% performance degradation in multi-turn vs.\ single-turn settings, finding that ``when LLMs take a wrong turn, they get lost and do not recover.'' These results motivate Ploidy's Fresh session as a structural reset mechanism.
 
-\subsection{Context Injection Mechanisms}
+\subsection{Context Injection as Pseudo-Fine-Tuning}
 \label{sec:injection-related}
 
-No prior work treats the delivery mechanism of context---memory file vs.\ skills file vs.\ system prompt---as an independent experimental variable. Vercel~(2026) compared AGENTS.md vs.\ skills for test pass rates; ETH Zurich~(2026) found AGENTS.md files may hinder AI coding agents. Neither connected injection mechanism to debate outcomes or anchoring strength.
+Context injection and fine-tuning are technically distinct: the former modifies input, the latter modifies weights. Context is ephemeral; fine-tuning is permanent. However, the behavioral boundary is blurring. Persistent context files (CLAUDE.md, memory.md) auto-load every session, functioning as de facto permanent input. In-context learning shifts model behavior to a degree comparable to fine-tuning. RAG pipelines inject external knowledge on every call.
+
+The practical consequence is that developers are \emph{pseudo-fine-tuning} their models through context engineering without recognizing it as such. A memory file that accumulates session observations (``We tried X and it failed'', ``The team decided Y'') causes the model to treat these as internalized knowledge rather than external reference---producing anchoring effects that mimic fine-tuned priors. A skills file with declarative rules (``RULE: always check for X'') is treated as external constraints, producing weaker priors. The \emph{form} of context delivery modulates how strongly the model internalizes it, independently of the information content.
+
+This is why Ploidy treats injection mode as an independent experimental variable: it controls the degree to which context \emph{acts like} fine-tuning. A Fresh session can escape context-induced bias precisely because context is not weight---remove the input and the model reverts. Fine-tuned bias cannot be escaped through session separation.
+
+No prior work treats the delivery mechanism---memory file vs.\ skills file vs.\ system prompt---as an experimental variable for debate outcomes. Vercel~(2026) compared AGENTS.md vs.\ skills for test pass rates; ETH Zurich~(2026) found AGENTS.md files may hinder AI coding agents. Neither connected injection mechanism to anchoring strength or debate efficacy.
 
 \subsection{Model Collapse and Context Contamination}
 \label{sec:collapse}
@@ -652,6 +658,30 @@ At 1n, Ploidy misses ground-truth issues (4.5/5.0). At 2n, recall reaches the ce
 
 At 3n, F1 drops to 0.505 despite perfect recall: additional sessions generate more bonus findings, inflating the denominator. At 4n, F1 recovers as the convergence step filters redundant findings more effectively with more input.
 
+\subsection{Experiment 5: Cross-Model Validation (Opus vs Sonnet)}
+\label{sec:cross-model}
+
+To test whether findings generalize beyond a single model size, we ran the same 2n diploid experiment with Claude Sonnet~4.6 (a smaller model in the same family).
+
+\begin{table}[H]
+\centering
+\caption{Opus vs Sonnet recall on long-context tasks (2n diploid).}
+\label{tab:cross-model}
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Task} & \textbf{Method} & \textbf{Opus Recall} & \textbf{Sonnet Recall} \\
+\midrule
+DB migration (abstract) & Single & 5.0/5 & 2/5 (+2P, 1M) \\
+DB migration (abstract) & Ploidy 2n & \textbf{5.0/5} & 2/5 (+1P, 2M) \\
+Auth overhaul (concrete) & Single & 5/5 & \textbf{5/5} \\
+Auth overhaul (concrete) & Ploidy 2n & 5/5 & \textbf{5/5} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On the auth overhaul task (concrete technical findings: bus factor, HS256, migration risk), Sonnet matches Opus at 5/5 regardless of method. On the DB migration task (abstract socio-technical judgment: sunk cost fallacy, anchor bias recognition), Sonnet drops to 2/5 with 2~missed issues---and Ploidy~2n performs \emph{worse} than Single (2.5/5 effective vs.\ 3.0/5). The Fresh session lacks sufficient reasoning capacity to generate useful challenges, injecting noise rather than constructive critique.
+
 % ============================================================
 \section{Discussion}
 \label{sec:discussion}
@@ -667,6 +697,15 @@ The two experiments suggest a conditional pattern, consistent with Young~\citep{
   \item \textbf{Long context with anchoring bias (2,000+ tokens): Asymmetry observed to help on the most biased task.} The Fresh session, having never seen the 18-month PostgreSQL commitment history, evaluated alternatives without sunk-cost pressure.
   \item \textbf{Between these extremes: Unknown.} A systematic context-length gradient experiment (100, 500, 1K, 5K, 10K tokens) is needed to identify the entrenchment threshold.
 \end{enumerate}
+
+\subsection{Minimum Capability Threshold}
+\label{sec:capability-threshold}
+
+The cross-model experiment (\S\ref{sec:cross-model}) reveals that context asymmetry is upper-bounded by the base model's reasoning capacity. This bound is \emph{task-dependent}: a task-abstraction gradient separates findings into concrete technical issues (identifiable by smaller models) and abstract socio-technical judgments (requiring frontier-class reasoning).
+
+When the base model falls below the capability threshold for a task class, three failure modes emerge: (1)~the Fresh session cannot generate substantive challenges, reducing the debate to noise; (2)~the Deep session cannot articulate abstract biases even when they exist in its context; (3)~the convergence phase cannot synthesize meaningfully from weak inputs. In the worst case, Ploidy underperforms Single---the Fresh session's uninformed challenges actively degrade the Deep session's partially correct analysis.
+
+This has practical implications: Ploidy should not be deployed with models that cannot independently identify the class of findings being sought. A pre-flight capability check---running a calibration task to verify the model can reason about the target finding class---may be warranted before committing to multi-session compute.
 
 \subsection{The Semi-Fresh Hypothesis}
 \label{sec:semifresh}
@@ -856,7 +895,7 @@ This pilot study has significant limitations that bound the strength of all clai
 \begin{itemize}[leftmargin=1.5em]
   \item \textbf{Statistical power}: 7+3 tasks, single run per method-task pair (re-run on Exp~2 only). Observed method differences (F1 $\Delta \approx 0.03$) are smaller than within-method variance (F1 $\Delta \approx 0.10$). No statistical tests are reported because the sample size and run count cannot support them. Minimum requirement for validated claims: 30+ tasks, 5+ runs, paired statistical tests (Wilcoxon signed-rank or bootstrap CI).
   \item \textbf{Author-defined ground truth}: All ground-truth issues were defined by the authors without independent expert validation. Bonus findings identified by the judge suggest the ground truth is incomplete. Future work should use independently validated benchmarks or multiple expert annotators with inter-rater agreement metrics.
-  \item \textbf{Single model family}: All experiments use Claude Opus 4.6 for generation. Observed effects may be Claude-specific---different model families (GPT-4o, Gemini 2.5) may exhibit different anchoring dynamics, context sensitivity, or debate behavior. Cross-model replication with at least two additional model families is necessary before generalizability claims.
+  \item \textbf{Single model family}: Experiments use Claude Opus~4.6 and Sonnet~4.6 (same family, different sizes). Cross-family validation (GPT, Gemini) is needed. The Sonnet experiment reveals a minimum capability threshold below which context asymmetry is ineffective or counterproductive---but the exact threshold and its generalizability across families are unknown.
   \item \textbf{Same-model judge}: Claude Opus 4.6 generates outputs and evaluates them. Systematic bias is possible (e.g., preference for structured multi-phase outputs, or conversely, penalizing verbose responses). Cross-model judges (GPT-4, Gemini) and a human evaluation subset with Cohen's kappa are needed.
   \item \textbf{Circular task design risk}: Long-context tasks were designed with anchoring biases whose detection is facilitated by context absence. A session without context is expected to be less biased by definition. Stronger validation requires externally-sourced tasks (e.g., real-world architecture decisions from open-source projects) where the relationship between context and bias is not author-designed.
   \item \textbf{Token cost}: Ploidy uses approximately 5$\times$ the tokens of Single Session. Self-Consistency (5-vote) was included as a budget-equivalent baseline and achieves the same 100\% recall as SF-Active on long-context tasks. The practical advantage of structured debate over Self-Consistency is the typed audit trail and convergence analysis, not recall improvement---a distinction that may or may not justify the added protocol complexity.
@@ -885,6 +924,7 @@ We presented Ploidy, a protocol for structured debate between same-model session
   \item \textbf{On long-context tasks}, Ploidy achieves highest recall across all context injection modes, with memory-style injection degrading Single recall by 20\% while Ploidy drops only 6\%.
   \item \textbf{Context injection mechanism is a moderator variable.} The same information delivered as accumulated memories vs.\ declarative rules produces measurably different anchoring effects, changing which method performs best.
   \item \textbf{Diploid (2n) is the cost-optimal ploidy level.} The second stochastic sample per context depth corrects the first sample's blind spots at 30\% additional compute. Higher ploidy provides no recall benefit.
+  \item \textbf{Context asymmetry requires a minimum model capability.} Cross-model validation (Opus vs Sonnet) reveals a task-abstraction gradient: concrete technical findings transfer across model sizes, but abstract socio-technical judgments require frontier-class reasoning. Below this threshold, Fresh sessions inject noise rather than correction.
 \end{enumerate}
 
 The intersection of intentional context asymmetry, structured cross-session debate, injection mechanism as experimental variable, and ploidy-level stochastic sampling has no prior publications as of March~2026.
