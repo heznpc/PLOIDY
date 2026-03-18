@@ -28,7 +28,7 @@ from mcp.types import ToolAnnotations
 from ploidy.convergence import ConvergenceEngine
 from ploidy.exceptions import PloidyError, ProtocolError, SessionError
 from ploidy.protocol import DebateMessage, DebatePhase, DebateProtocol, SemanticAction
-from ploidy.session import SessionContext, SessionRole
+from ploidy.session import DeliveryMode, SessionContext, SessionRole
 from ploidy.store import DebateStore
 
 logger = logging.getLogger("ploidy")
@@ -43,6 +43,7 @@ _MAX_CONTENT_LEN = int(os.environ.get("PLOIDY_MAX_CONTENT_LEN", "50000"))
 _MAX_CONTEXT_DOCS = int(os.environ.get("PLOIDY_MAX_CONTEXT_DOCS", "10"))
 _MAX_SESSIONS_PER_DEBATE = int(os.environ.get("PLOIDY_MAX_SESSIONS", "5"))
 _AUTH_TOKEN = os.environ.get("PLOIDY_AUTH_TOKEN")
+_USE_LLM_CONVERGENCE = os.environ.get("PLOIDY_LLM_CONVERGENCE", "").lower() in ("1", "true", "yes")
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +115,12 @@ async def _recover_state(store: DebateStore) -> None:
 
         session_ids = []
         for s in sessions:
-            role = SessionRole.EXPERIENCED if s["role"] == "experienced" else SessionRole.FRESH
+            role_map = {
+                "experienced": SessionRole.EXPERIENCED,
+                "semi_fresh": SessionRole.SEMI_FRESH,
+                "fresh": SessionRole.FRESH,
+            }
+            role = role_map.get(s["role"], SessionRole.FRESH)
             ctx = SessionContext(
                 session_id=s["id"],
                 role=role,
@@ -271,15 +277,21 @@ async def debate_start(prompt: str, context_documents: list[str] | None = None) 
         idempotentHint=False,
     ),
 )
-async def debate_join(debate_id: str) -> dict:
-    """Join an existing debate as the fresh (zero-context) session.
+async def debate_join(
+    debate_id: str,
+    role: str = "fresh",
+    delivery_mode: str = "none",
+) -> dict:
+    """Join an existing debate as a fresh or semi-fresh session.
 
-    The fresh session receives only the debate prompt — no project context,
-    no prior conversation history. This deliberate context asymmetry is
-    the core mechanism of Ploidy.
+    The session receives context based on its role:
+    - fresh: Only the debate prompt (zero context)
+    - semi_fresh: Compressed summary of prior analysis
 
     Args:
         debate_id: The debate to join (provided by the experienced session).
+        role: Session role — 'fresh' (default) or 'semi_fresh'.
+        delivery_mode: Context delivery — 'none', 'passive', or 'active'.
 
     Returns:
         Session identifier and the debate prompt.
@@ -296,25 +308,42 @@ async def debate_join(debate_id: str) -> dict:
             f"Debate already has {current_count} sessions (max {_MAX_SESSIONS_PER_DEBATE})"
         )
 
-    fresh_id = f"{debate_id}-fresh-{uuid.uuid4().hex[:6]}"
-    fresh = SessionContext(
-        session_id=fresh_id,
-        role=SessionRole.FRESH,
+    # Validate role
+    role_map = {"fresh": SessionRole.FRESH, "semi_fresh": SessionRole.SEMI_FRESH}
+    session_role = role_map.get(role)
+    if session_role is None:
+        raise ProtocolError(f"Invalid role '{role}'. Must be 'fresh' or 'semi_fresh'")
+
+    # Validate delivery mode
+    dm_map = {
+        "none": DeliveryMode.NONE,
+        "passive": DeliveryMode.PASSIVE,
+        "active": DeliveryMode.ACTIVE,
+    }
+    dm = dm_map.get(delivery_mode, DeliveryMode.NONE)
+
+    prefix = "sf" if session_role == SessionRole.SEMI_FRESH else "fresh"
+    sid = f"{debate_id}-{prefix}-{uuid.uuid4().hex[:6]}"
+    ctx = SessionContext(
+        session_id=sid,
+        role=session_role,
         base_prompt=protocol.prompt,
         context_documents=[],
+        delivery_mode=dm,
     )
-    await store.save_session(fresh_id, debate_id, "fresh", protocol.prompt)
+    await store.save_session(sid, debate_id, role, protocol.prompt)
 
-    _sessions[fresh_id] = fresh
-    _debate_sessions[debate_id].append(fresh_id)
-    _session_to_debate[fresh_id] = debate_id
+    _sessions[sid] = ctx
+    _debate_sessions[debate_id].append(sid)
+    _session_to_debate[sid] = debate_id
 
-    logger.info("Session %s joined debate %s as fresh", fresh_id, debate_id)
+    logger.info("Session %s joined debate %s as %s", sid, debate_id, role)
 
     return {
         "debate_id": debate_id,
-        "session_id": fresh_id,
-        "role": "fresh",
+        "session_id": sid,
+        "role": role,
+        "delivery_mode": delivery_mode,
         "phase": protocol.phase.value,
         "prompt": protocol.prompt,
     }
@@ -488,7 +517,7 @@ async def debate_converge(debate_id: str) -> dict:
 
         protocol.advance_phase()  # → CONVERGENCE
 
-        engine = ConvergenceEngine()
+        engine = ConvergenceEngine(use_llm=_USE_LLM_CONVERGENCE)
         session_roles = {
             sid: _sessions[sid].role.value.capitalize()
             for sid in _debate_sessions.get(debate_id, [])
@@ -695,6 +724,215 @@ async def debate_history(limit: int = 50) -> dict:
         "debates": debates,
         "total": len(debates),
         "limit": clamped,
+    }
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        destructiveHint=True,
+        readOnlyHint=False,
+        idempotentHint=False,
+    ),
+)
+async def debate_auto(
+    prompt: str,
+    context_documents: list[str] | None = None,
+    fresh_role: str = "fresh",
+    delivery_mode: str = "none",
+) -> dict:
+    """Run a complete debate automatically in a single command (v0.2).
+
+    Creates a debate, generates Fresh/Semi-Fresh responses via API,
+    runs the full protocol, and returns the convergence result.
+    Requires PLOIDY_API_BASE_URL to be configured.
+
+    Args:
+        prompt: The decision question to debate.
+        context_documents: Optional documents for the experienced session.
+        fresh_role: Role for auto-session — 'fresh' or 'semi_fresh'.
+        delivery_mode: Context delivery for semi-fresh — 'passive' or 'active'.
+
+    Returns:
+        Complete debate result with convergence synthesis.
+    """
+    try:
+        from ploidy.api_client import (
+            compress_position,
+            generate_challenge,
+            generate_fresh_position,
+            generate_semi_fresh_position,
+            is_api_available,
+        )
+    except ImportError:
+        raise PloidyError(
+            "API client not available. Install with: pip install ploidy[api]"
+        )
+
+    if not is_api_available():
+        raise PloidyError(
+            "API not configured. Set PLOIDY_API_BASE_URL environment variable."
+        )
+
+    store = await _init()
+
+    _validate_length(prompt, _MAX_PROMPT_LEN, "prompt")
+    docs = context_documents or []
+
+    # 1. Create debate + experienced session
+    debate_id = uuid.uuid4().hex[:12]
+    await store.save_debate(debate_id, prompt)
+
+    exp_id = f"{debate_id}-exp-{uuid.uuid4().hex[:6]}"
+    exp = SessionContext(
+        session_id=exp_id,
+        role=SessionRole.EXPERIENCED,
+        base_prompt=prompt,
+        context_documents=docs,
+        delivery_mode=DeliveryMode.PASSIVE,
+    )
+    await store.save_session(exp_id, debate_id, "experienced", prompt)
+
+    _sessions[exp_id] = exp
+    _debate_sessions[debate_id] = [exp_id]
+    _session_to_debate[exp_id] = debate_id
+
+    protocol = DebateProtocol(debate_id, prompt)
+    _protocols[debate_id] = protocol
+    _debate_locks[debate_id] = asyncio.Lock()
+
+    # 2. Create auto-session
+    role_map = {"fresh": SessionRole.FRESH, "semi_fresh": SessionRole.SEMI_FRESH}
+    auto_role = role_map.get(fresh_role, SessionRole.FRESH)
+    dm_map = {"passive": DeliveryMode.PASSIVE, "active": DeliveryMode.ACTIVE}
+    dm = dm_map.get(delivery_mode, DeliveryMode.NONE)
+
+    prefix = "sf" if auto_role == SessionRole.SEMI_FRESH else "fresh"
+    auto_id = f"{debate_id}-{prefix}-{uuid.uuid4().hex[:6]}"
+    auto_ctx = SessionContext(
+        session_id=auto_id,
+        role=auto_role,
+        base_prompt=prompt,
+        context_documents=[],
+        delivery_mode=dm,
+    )
+    await store.save_session(auto_id, debate_id, fresh_role, prompt)
+
+    _sessions[auto_id] = auto_ctx
+    _debate_sessions[debate_id].append(auto_id)
+    _session_to_debate[auto_id] = debate_id
+
+    logger.info(
+        "Auto-debate %s: experienced=%s, %s=%s",
+        debate_id, exp_id, fresh_role, auto_id,
+    )
+
+    # 3. Generate positions
+    protocol.advance_phase()  # → POSITION
+
+    # Experienced position (from the calling session's context)
+    full_prompt = prompt
+    if docs:
+        full_prompt = f"Context:\n{''.join(docs)}\n\n{prompt}"
+    deep_pos_content = (
+        f"Please analyze and provide your position on: {full_prompt}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical."
+    )
+
+    # Auto-generate fresh/semi-fresh position via API
+    compressed = None
+    if auto_role == SessionRole.SEMI_FRESH:
+        # First generate deep position via API for compression
+        deep_pos = await generate_fresh_position(full_prompt)
+        compressed = await compress_position(deep_pos)
+        auto_pos = await generate_semi_fresh_position(
+            prompt, compressed, delivery_mode=delivery_mode
+        )
+        auto_ctx.compressed_summary = compressed
+    else:
+        auto_pos = await generate_fresh_position(prompt)
+
+    # Record positions
+    for sid, content in [(exp_id, deep_pos_content), (auto_id, auto_pos)]:
+        msg = DebateMessage(
+            session_id=sid,
+            phase=DebatePhase.POSITION,
+            content=content,
+            timestamp=_now(),
+        )
+        protocol.submit_message(msg)
+        await store.save_message(debate_id, sid, "position", content)
+
+    protocol.advance_phase()  # → CHALLENGE
+
+    # 4. Generate challenges via API
+    auto_challenge = await generate_challenge(
+        own_position=auto_pos,
+        other_position=deep_pos_content,
+        own_role=fresh_role,
+        other_role="experienced",
+    )
+
+    ch_msg = DebateMessage(
+        session_id=auto_id,
+        phase=DebatePhase.CHALLENGE,
+        content=auto_challenge,
+        timestamp=_now(),
+        action=SemanticAction.CHALLENGE,
+    )
+    protocol.submit_message(ch_msg)
+    await store.save_message(debate_id, auto_id, "challenge", auto_challenge, "challenge")
+
+    # 5. Convergence
+    protocol.advance_phase()  # → CONVERGENCE
+
+    engine = ConvergenceEngine(use_llm=_USE_LLM_CONVERGENCE)
+    session_roles = {
+        exp_id: "Experienced",
+        auto_id: fresh_role.replace("_", "-").title(),
+    }
+    result = await engine.analyze(protocol, session_roles)
+
+    protocol.advance_phase()  # → COMPLETE
+
+    points_json = json.dumps(
+        [
+            {
+                "category": p.category,
+                "summary": p.summary,
+                "session_a_view": p.session_a_view,
+                "session_b_view": p.session_b_view,
+                "resolution": p.resolution,
+            }
+            for p in result.points
+        ]
+    )
+    await store.save_convergence_and_complete(
+        debate_id, result.synthesis, result.confidence, points_json
+    )
+    _cleanup_debate(debate_id)
+
+    logger.info(
+        "Auto-debate %s complete (confidence=%.2f)",
+        debate_id, result.confidence,
+    )
+
+    return {
+        "debate_id": debate_id,
+        "phase": "complete",
+        "mode": "auto",
+        "fresh_role": fresh_role,
+        "delivery_mode": delivery_mode,
+        "synthesis": result.synthesis,
+        "confidence": result.confidence,
+        "meta_analysis": result.meta_analysis,
+        "points": [
+            {
+                "category": p.category,
+                "summary": p.summary,
+                "resolution": p.resolution,
+            }
+            for p in result.points
+        ],
     }
 
 
