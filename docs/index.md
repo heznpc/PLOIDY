@@ -74,15 +74,24 @@ Target venues: ICML 2026 Workshop, NeurIPS 2026, AAMAS 2027
 
 ```bash
 pip install ploidy
-ploidy serve  # starts MCP server on :8765
+python -m ploidy  # starts MCP server on :8765
 ```
 
-```bash
-# Terminal 1 (Deep session)
-ploidy start "Should we migrate from PostgreSQL to TimescaleDB?"
+Connect two MCP clients (e.g., Claude Code terminals) to `http://localhost:8765/mcp`, then use the debate tools:
 
-# Terminal 2 (Fresh session)
-ploidy join debate-xxxx
+```bash
+# Terminal 1 (Deep session) — call via MCP tool
+debate_start prompt="Should we migrate from PostgreSQL to TimescaleDB?"
+
+# Terminal 2 (Fresh session) — call via MCP tool
+debate_join debate_id="debate-xxxx" role="fresh"
+```
+
+Or use single-terminal auto mode (requires API key):
+
+```bash
+export PLOIDY_API_BASE_URL=https://api.anthropic.com
+# Call debate_auto via MCP — server runs both sides automatically
 ```
 
 ## Documentation

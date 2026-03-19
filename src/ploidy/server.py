@@ -783,8 +783,8 @@ async def debate_auto(
     try:
         from ploidy.api_client import (
             compress_position,
-            generate_experienced_position,
             generate_challenge,
+            generate_experienced_position,
             generate_fresh_position,
             generate_semi_fresh_position,
             is_api_available,
@@ -809,7 +809,11 @@ async def debate_auto(
     if auto_role is None:
         raise ProtocolError(f"Invalid fresh_role '{fresh_role}'. Must be 'fresh' or 'semi_fresh'")
 
-    dm_map = {"none": DeliveryMode.NONE, "passive": DeliveryMode.PASSIVE, "active": DeliveryMode.ACTIVE}
+    dm_map = {
+        "none": DeliveryMode.NONE,
+        "passive": DeliveryMode.PASSIVE,
+        "active": DeliveryMode.ACTIVE,
+    }
     dm = dm_map.get(delivery_mode)
     if dm is None:
         raise ProtocolError(

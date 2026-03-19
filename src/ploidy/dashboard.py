@@ -25,6 +25,7 @@ def _db_path() -> Path:
     """Resolve the dashboard database path from the current environment."""
     return Path(os.environ.get("PLOIDY_DB_PATH", str(Path.home() / ".ploidy" / "ploidy.db")))
 
+
 # ---------------------------------------------------------------------------
 # HTML Templates (inline to avoid external dependencies)
 # ---------------------------------------------------------------------------
@@ -303,7 +304,8 @@ def _render_debate_detail(d: dict) -> str:
             points = json.loads(conv.get("points_json", "[]"))
             for p in points:
                 cat = p.get("category", "irreducible")
-                safe_class = cat if cat in {"agreement", "productive_disagreement", "irreducible"} else "irreducible"
+                valid = {"agreement", "productive_disagreement", "irreducible"}
+                safe_class = cat if cat in valid else "irreducible"
                 safe_cat = html.escape(cat.replace("_", " ").title())
                 safe_summary = html.escape(p.get("summary", "")[:200])
                 convergence_html += (

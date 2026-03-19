@@ -20,11 +20,13 @@ from pathlib import Path
 
 import aiosqlite
 
-from ploidy.exceptions import PloidyError
+from ploidy.exceptions import PloidyError  # noqa: I001
+
 
 def default_db_path() -> Path:
     """Resolve the database path from the current environment."""
     return Path(os.environ.get("PLOIDY_DB_PATH", str(Path.home() / ".ploidy" / "ploidy.db")))
+
 
 _CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS debates (
@@ -68,7 +70,10 @@ CREATE TABLE IF NOT EXISTS convergence (
 """
 
 _SESSION_MIGRATIONS = (
-    ("context_documents", "ALTER TABLE sessions ADD COLUMN context_documents TEXT NOT NULL DEFAULT '[]'"),
+    (
+        "context_documents",
+        "ALTER TABLE sessions ADD COLUMN context_documents TEXT NOT NULL DEFAULT '[]'",
+    ),
     ("delivery_mode", "ALTER TABLE sessions ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'none'"),
     ("compressed_summary", "ALTER TABLE sessions ADD COLUMN compressed_summary TEXT"),
     ("metadata_json", "ALTER TABLE sessions ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"),
