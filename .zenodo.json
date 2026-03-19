@@ -1,0 +1,21 @@
+{
+  "title": "Ploidy: Context-Asymmetric Structured Debate for LLM Decision Verification",
+  "description": "A structured debate protocol between physically separate sessions of the same LLM with intentionally asymmetric context depths. Ploidy identifies two independent phenomena—context asymmetry (Event A) and stochastic variance (Event B)—and uses ploidy-level session scaling to distinguish them. Includes an MCP server implementation, experiment runner supporting 4 model families, and human-in-the-loop review capability.",
+  "creators": [
+    {
+      "name": "heznpc"
+    }
+  ],
+  "keywords": [
+    "LLM",
+    "multi-agent debate",
+    "context asymmetry",
+    "confirmation bias",
+    "anchoring",
+    "MCP",
+    "structured debate"
+  ],
+  "license": "MIT",
+  "upload_type": "software",
+  "access_right": "open"
+}
