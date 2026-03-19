@@ -3,7 +3,7 @@
 **Intentional context asymmetry to reduce confirmation bias in LLMs.**
 
 [![CI](https://github.com/heznpc/ploidy/actions/workflows/ci.yml/badge.svg)](https://github.com/heznpc/ploidy/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-heznpc.github.io%2Fploidy-blue)](https://heznpc.github.io/ploidy/)
+[![Docs](https://img.shields.io/badge/docs-heznpc.github.io%2FPLOIDY-blue)](https://heznpc.github.io/PLOIDY/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 
@@ -116,11 +116,11 @@ docker compose up
 
 ## Documentation
 
-- [Getting Started](https://heznpc.github.io/ploidy/getting-started/) — Install and first debate
-- [How It Works](https://heznpc.github.io/ploidy/how-it-works/) — Core concept
-- [Architecture](https://heznpc.github.io/ploidy/architecture/) — Technical overview
-- [API Reference](https://heznpc.github.io/ploidy/api-reference/) — Tool documentation
-- [Research](https://heznpc.github.io/ploidy/research/) — Academic positioning
+- [Getting Started](https://heznpc.github.io/PLOIDY/getting-started/) — Install and first debate
+- [How It Works](https://heznpc.github.io/PLOIDY/how-it-works/) — Core concept
+- [Architecture](https://heznpc.github.io/PLOIDY/architecture/) — Technical overview
+- [API Reference](https://heznpc.github.io/PLOIDY/api-reference/) — Tool documentation
+- [Research](https://heznpc.github.io/PLOIDY/research/) — Academic positioning
 
 ## Research
 

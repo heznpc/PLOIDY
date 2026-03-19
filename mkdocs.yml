@@ -1,8 +1,8 @@
 site_name: Ploidy
 site_description: "Same model, different context depths, better decisions."
-site_url: https://heznpc.github.io/ploidy/
-repo_url: https://github.com/heznpc/ploidy
-repo_name: heznpc/ploidy
+site_url: https://heznpc.github.io/PLOIDY/
+repo_url: https://github.com/heznpc/PLOIDY
+repo_name: heznpc/PLOIDY
 
 theme:
   name: material
