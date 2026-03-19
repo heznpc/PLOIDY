@@ -51,6 +51,11 @@ CLAUDE.md
 
 # Internal research notes (local only)
 docs/internal/
+docs/paper-draft.md
+paper/research-program.md
+paper/context-as-lifespan-outline.md
+paper/draft-v1.md
+paper/draft-v2.md
 
 # Experiment results (large, local only)
 experiments/results/
