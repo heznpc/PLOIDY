@@ -3,15 +3,18 @@
 Exposes debate tools via the Model Context Protocol, allowing MCP clients
 to initiate debates, submit positions, and retrieve convergence results.
 
-Tools exposed:
-- debate/start: Begin a new debate session with a decision prompt
-- debate/join: Join an existing debate as the fresh session
-- debate/position: Submit a position from a session
-- debate/challenge: Submit a challenge to another session's position
-- debate/converge: Trigger convergence analysis
-- debate/cancel: Cancel a debate in progress
-- debate/status: Get current state of a debate
-- debate/history: Retrieve past debates and their outcomes
+Tools exposed (11):
+- debate_start: Begin a new debate session with a decision prompt
+- debate_join: Join an existing debate as the fresh session
+- debate_position: Submit a position from a session
+- debate_challenge: Submit a challenge to another session's position
+- debate_converge: Trigger convergence analysis
+- debate_status: Get current state of a debate
+- debate_cancel: Cancel a debate in progress
+- debate_delete: Permanently delete a debate and all its data
+- debate_history: Retrieve past debates and their outcomes
+- debate_auto: Run a full two-sided debate automatically via API
+- debate_review: Review and resume a paused auto-debate (HITL)
 """
 
 import asyncio

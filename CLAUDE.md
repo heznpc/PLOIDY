@@ -15,7 +15,7 @@ Cross-session multi-agent debate MCP server.
 - FastMCP-based server with Streamable HTTP transport
 
 ## Key Files
-- `src/ploidy/server.py` -- FastMCP server entry point, 10 debate tools, Streamable HTTP on port 8765
+- `src/ploidy/server.py` -- FastMCP server entry point, 11 debate tools (incl. HITL debate_review), Streamable HTTP on port 8765
 - `src/ploidy/protocol.py` -- Debate state machine (phases: INDEPENDENT, POSITION, CHALLENGE, CONVERGENCE, COMPLETE)
 - `src/ploidy/session.py` -- Session lifecycle, Deep/Semi-Fresh/Fresh roles, delivery modes, effort levels
 - `src/ploidy/convergence.py` -- Convergence engine (rule-based + optional LLM meta-analysis)
