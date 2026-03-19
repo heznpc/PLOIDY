@@ -88,6 +88,7 @@ _sessions: dict[str, SessionContext] = {}
 _debate_sessions: dict[str, list[str]] = {}
 _session_to_debate: dict[str, str] = {}  # reverse index
 _debate_locks: dict[str, asyncio.Lock] = {}
+_paused_debates: dict[str, dict] = {}  # debate_id -> auto-debate context for HITL resume
 
 
 async def _init() -> DebateStore:
@@ -764,6 +765,7 @@ async def debate_auto(
     context_documents: list[str] | None = None,
     fresh_role: str = "fresh",
     delivery_mode: str = "none",
+    pause_at: str | None = None,
 ) -> dict:
     """Run a complete debate automatically in a single command (v0.2).
 
@@ -776,9 +778,13 @@ async def debate_auto(
         context_documents: Optional documents for the experienced session.
         fresh_role: Role for auto-session — 'fresh' or 'semi_fresh'.
         delivery_mode: Context delivery for semi-fresh — 'passive' or 'active'.
+        pause_at: Optional phase to pause at for human review — 'challenge'
+            (after positions, before challenges) or 'convergence' (after
+            challenges, before convergence). Use debate_review to resume.
 
     Returns:
-        Complete debate result with convergence synthesis.
+        Complete debate result with convergence synthesis, or paused state
+        if pause_at is specified.
     """
     try:
         from ploidy.api_client import (
@@ -823,6 +829,10 @@ async def debate_auto(
         raise ProtocolError("Fresh auto sessions must use delivery_mode='none'")
     if auto_role == SessionRole.SEMI_FRESH and dm == DeliveryMode.NONE:
         raise ProtocolError("Semi-fresh auto sessions must use 'passive' or 'active'")
+
+    valid_pause = {None, "challenge", "convergence"}
+    if pause_at not in valid_pause:
+        raise ProtocolError(f"Invalid pause_at '{pause_at}'. Must be 'challenge' or 'convergence'")
 
     # 1. Create debate + experienced session
     debate_id = uuid.uuid4().hex[:12]
@@ -919,6 +929,31 @@ async def debate_auto(
             protocol.submit_message(msg)
             await store.save_message(debate_id, sid, "position", content)
 
+        # HITL checkpoint: pause before challenge phase
+        if pause_at == "challenge":
+            _paused_debates[debate_id] = {
+                "exp_id": exp_id,
+                "auto_id": auto_id,
+                "exp_pos": exp_pos,
+                "auto_pos": auto_pos,
+                "fresh_role": fresh_role,
+                "delivery_mode": delivery_mode,
+                "paused_phase": "challenge",
+            }
+            await store.update_debate_status(debate_id, "paused")
+            logger.info("Auto-debate %s paused before challenge phase (HITL)", debate_id)
+            return {
+                "debate_id": debate_id,
+                "phase": "paused",
+                "paused_before": "challenge",
+                "mode": "auto_hitl",
+                "positions": {
+                    "experienced": exp_pos[:500],
+                    "auto": auto_pos[:500],
+                },
+                "message": "Debate paused for human review. Use debate_review to continue.",
+            }
+
         protocol.advance_phase()  # → CHALLENGE
 
         exp_challenge = await generate_challenge(
@@ -944,6 +979,33 @@ async def debate_auto(
             )
             protocol.submit_message(ch_msg)
             await store.save_message(debate_id, sid, "challenge", content, "challenge")
+
+        # HITL checkpoint: pause before convergence phase
+        if pause_at == "convergence":
+            _paused_debates[debate_id] = {
+                "exp_id": exp_id,
+                "auto_id": auto_id,
+                "exp_pos": exp_pos,
+                "auto_pos": auto_pos,
+                "exp_challenge": exp_challenge,
+                "auto_challenge": auto_challenge,
+                "fresh_role": fresh_role,
+                "delivery_mode": delivery_mode,
+                "paused_phase": "convergence",
+            }
+            await store.update_debate_status(debate_id, "paused")
+            logger.info("Auto-debate %s paused before convergence (HITL)", debate_id)
+            return {
+                "debate_id": debate_id,
+                "phase": "paused",
+                "paused_before": "convergence",
+                "mode": "auto_hitl",
+                "challenges": {
+                    "experienced": exp_challenge[:500],
+                    "auto": auto_challenge[:500],
+                },
+                "message": "Debate paused for human review. Use debate_review to continue.",
+            }
 
         protocol.advance_phase()  # → CONVERGENCE
 
@@ -988,6 +1050,200 @@ async def debate_auto(
         "mode": "auto",
         "fresh_role": fresh_role,
         "delivery_mode": delivery_mode,
+        "synthesis": result.synthesis,
+        "confidence": result.confidence,
+        "meta_analysis": result.meta_analysis,
+        "points": [
+            {
+                "category": p.category,
+                "summary": p.summary,
+                "resolution": p.resolution,
+            }
+            for p in result.points
+        ],
+    }
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        destructiveHint=False,
+        readOnlyHint=False,
+        idempotentHint=False,
+    ),
+)
+async def debate_review(
+    debate_id: str,
+    action: str = "approve",
+    override_content: str | None = None,
+) -> dict:
+    """Review and resume a paused auto-debate (HITL).
+
+    When debate_auto is called with pause_at, the debate pauses at the
+    specified phase for human review. Use this tool to approve, override,
+    or reject the paused output and continue the debate.
+
+    Args:
+        debate_id: The paused debate to review.
+        action: One of 'approve' (continue as-is), 'override' (replace
+            last phase output with override_content), or 'reject' (cancel).
+        override_content: Required when action='override'. Replaces the
+            auto-generated content for the current phase.
+
+    Returns:
+        The resumed debate result or cancellation confirmation.
+    """
+    store = await _init()
+
+    if debate_id not in _paused_debates:
+        raise PloidyError(f"Debate {debate_id} is not paused or does not exist")
+
+    if action not in ("approve", "override", "reject"):
+        raise ProtocolError(
+            f"Invalid action '{action}'. Must be 'approve', 'override', or 'reject'"
+        )
+
+    if action == "override" and not override_content:
+        raise ProtocolError("override_content is required when action='override'")
+
+    ctx = _paused_debates.pop(debate_id)
+    protocol = _protocols.get(debate_id)
+
+    if protocol is None:
+        raise PloidyError(f"Protocol state lost for debate {debate_id}")
+
+    if action == "reject":
+        await store.update_debate_status(debate_id, "cancelled")
+        _cleanup_debate(debate_id)
+        logger.info("Auto-debate %s rejected by human reviewer", debate_id)
+        return {
+            "debate_id": debate_id,
+            "phase": "cancelled",
+            "mode": "auto_hitl",
+            "message": "Debate rejected and cancelled by reviewer.",
+        }
+
+    try:
+        from ploidy.api_client import generate_challenge
+    except ImportError:
+        raise PloidyError("API client not available. Install with: pip install ploidy[api]")
+
+    exp_id = ctx["exp_id"]
+    auto_id = ctx["auto_id"]
+    fresh_role = ctx["fresh_role"]
+
+    await store.update_debate_status(debate_id, "active")
+
+    if ctx["paused_phase"] == "challenge":
+        # Resume from after positions, before challenges
+        exp_pos = ctx["exp_pos"]
+        auto_pos = ctx["auto_pos"]
+
+        if action == "override" and override_content:
+            # Human overrides the auto position
+            auto_pos = override_content
+            # Update the stored message
+            msg = DebateMessage(
+                session_id=auto_id,
+                phase=DebatePhase.POSITION,
+                content=auto_pos,
+                timestamp=_now(),
+            )
+            # Replace last auto position in protocol
+            protocol.messages = [
+                m
+                for m in protocol.messages
+                if not (m.session_id == auto_id and m.phase == DebatePhase.POSITION)
+            ]
+            protocol.submit_message(msg)
+            await store.save_message(debate_id, auto_id, "position", auto_pos)
+
+        protocol.advance_phase()  # → CHALLENGE
+
+        exp_challenge = await generate_challenge(
+            own_position=exp_pos,
+            other_position=auto_pos,
+            own_role="experienced",
+            other_role=fresh_role,
+        )
+        auto_challenge = await generate_challenge(
+            own_position=auto_pos,
+            other_position=exp_pos,
+            own_role=fresh_role,
+            other_role="experienced",
+        )
+
+        for sid, content in [(exp_id, exp_challenge), (auto_id, auto_challenge)]:
+            ch_msg = DebateMessage(
+                session_id=sid,
+                phase=DebatePhase.CHALLENGE,
+                content=content,
+                timestamp=_now(),
+                action=SemanticAction.CHALLENGE,
+            )
+            protocol.submit_message(ch_msg)
+            await store.save_message(debate_id, sid, "challenge", content, "challenge")
+
+    elif ctx["paused_phase"] == "convergence":
+        # Resume from after challenges, before convergence
+        if action == "override" and override_content:
+            # Human overrides the auto challenge
+            auto_challenge = override_content
+            protocol.messages = [
+                m
+                for m in protocol.messages
+                if not (m.session_id == auto_id and m.phase == DebatePhase.CHALLENGE)
+            ]
+            ch_msg = DebateMessage(
+                session_id=auto_id,
+                phase=DebatePhase.CHALLENGE,
+                content=auto_challenge,
+                timestamp=_now(),
+                action=SemanticAction.CHALLENGE,
+            )
+            protocol.submit_message(ch_msg)
+            await store.save_message(debate_id, auto_id, "challenge", auto_challenge, "challenge")
+
+    # Continue to convergence + complete
+    protocol.advance_phase()  # → CONVERGENCE
+
+    engine = ConvergenceEngine(use_llm=_USE_LLM_CONVERGENCE)
+    session_roles = {
+        exp_id: "Experienced",
+        auto_id: fresh_role.replace("_", "-").title(),
+    }
+    result = await engine.analyze(protocol, session_roles)
+
+    protocol.advance_phase()  # → COMPLETE
+
+    points_json = json.dumps(
+        [
+            {
+                "category": p.category,
+                "summary": p.summary,
+                "session_a_view": p.session_a_view,
+                "session_b_view": p.session_b_view,
+                "resolution": p.resolution,
+            }
+            for p in result.points
+        ]
+    )
+    await store.save_convergence_and_complete(
+        debate_id, result.synthesis, result.confidence, points_json
+    )
+    _cleanup_debate(debate_id)
+
+    logger.info(
+        "Auto-debate %s resumed and completed via HITL (confidence=%.2f)",
+        debate_id,
+        result.confidence,
+    )
+
+    return {
+        "debate_id": debate_id,
+        "phase": "complete",
+        "mode": "auto_hitl",
+        "reviewer_action": action,
+        "fresh_role": fresh_role,
         "synthesis": result.synthesis,
         "confidence": result.confidence,
         "meta_analysis": result.meta_analysis,
