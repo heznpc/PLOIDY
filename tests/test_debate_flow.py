@@ -277,7 +277,14 @@ async def test_debate_auto_generates_both_sides(monkeypatch):
         assert prompt == "Auto prompt"
         return "fresh position"
 
-    async def fake_challenge(own_position, other_position, own_role="fresh", other_role="experienced", effort="high", model=None):
+    async def fake_challenge(
+        own_position,
+        other_position,
+        own_role="fresh",
+        other_role="experienced",
+        effort="high",
+        model=None,
+    ):
         return f"{own_role} challenge vs {other_role}: {own_position} / {other_position}"
 
     monkeypatch.setattr(api_client, "generate_experienced_position", fake_exp)

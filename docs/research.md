@@ -342,36 +342,37 @@ These results support four claims:
 
 4. **Diploid (2n) is the optimal ploidy level** for cost-efficient recall maximization. Higher ploidy provides no recall benefit while increasing compute cost and reducing precision through finding inflation.
 
-### Experiment 5: Cross-Model Validation (Opus vs Sonnet)
+### Experiment 5: Cross-Model Validation (4 Families)
 
-**Setup**: 2 long-context tasks, 2 methods (Single, Ploidy 2n), Claude Sonnet 4.6 vs Claude Opus 4.6. Same tasks, same ploidy level, same injection mode (raw).
+**Setup**: 3 long-context tasks, ploidy sweep (1n–4n), 4 model families: Claude Opus 4.6, Claude Sonnet 4.6, Gemini 3.1 Pro, GPT-5.4 (via Codex CLI). A **Stochastic-N baseline** (N independent sessions all receiving full context, matched to Ploidy's total session count) isolates Event A (context asymmetry) from Event B (stochastic variance). Δ = Ploidy F1 − Stochastic-N F1; positive values indicate context asymmetry contributes beyond stochastic sampling.
 
-**Results**:
+**Results** (selected ploidy levels):
 
-| Task | Method | Opus Recall | Sonnet Recall |
-|------|--------|-------------|---------------|
-| DB migration (abstract judgment) | Single | 5.0/5 | 2/5 (+2P, 1M) |
-| DB migration (abstract judgment) | Ploidy 2n | **5.0/5** | 2/5 (+1P, **2M**) |
-| Auth overhaul (concrete technical) | Single | 5/5 | **5/5** |
-| Auth overhaul (concrete technical) | Ploidy 2n | 5/5 | **5/5** |
+| Model | Ploidy | Stoch-N F1 | Ploidy F1 | Δ(P−St) |
+|-------|--------|-----------|-----------|---------|
+| Opus 4.6 | 2n | 0.359 | 0.538 | **+0.179** |
+| Opus 4.6 | 4n | 0.519 | 0.560 | **+0.042** |
+| Codex/GPT-5.4 | 2n | 0.258 | 0.450 | **+0.192** |
+| Codex/GPT-5.4 | 4n | 0.347 | 0.500 | **+0.153** |
+| Gemini 3.1 Pro | 2n | 0.622 | 0.547 | −0.075 |
+| Gemini 3.1 Pro | 4n | 0.444 | 0.500 | **+0.056** |
+| Sonnet 4.6 | 2n | 0.500 | 0.218 | −0.282 |
+| Sonnet 4.6 | 4n | 0.450 | 0.455 | +0.005 |
 
-| Metric | Opus 2n | Sonnet 2n |
-|--------|---------|-----------|
-| **Avg Recall** | **5.0/5** | 3.5/5 |
-| **Avg F1** | **0.667** | 0.510 |
-| **Avg Time** | 352s | 414s |
+**Key finding: Context asymmetry benefits scale with model capability**
+
+- **Opus**: Ploidy > Stochastic-N at all 4 ploidy levels (4/4 positive Δ).
+- **Codex/GPT-5.4**: Ploidy > Stochastic-N at all 3 tested levels (3/3 positive).
+- **Gemini**: Mixed — negative at 2n–3n, positive only at 4n.
+- **Sonnet**: Ploidy ≤ Stochastic-N at 2n–3n. Fresh sessions inject noise rather than constructive critique.
 
 **Key finding: Minimum capability threshold**
 
-Context asymmetry cannot compensate for insufficient base model capability. On the DB migration task — which requires recognizing sunk cost fallacy, anchor bias, and abstract socio-technical judgment — Sonnet's Ploidy 2n (2/5, 2 missed) underperforms Opus's Single session (5/5). The Fresh session in Sonnet's debate lacks the reasoning capacity to generate useful challenges, injecting noise rather than constructive critique.
+Context asymmetry cannot compensate for insufficient base model capability. Sonnet Ploidy 2n (Δ=−0.282) is the strongest negative result — the Fresh session's inability to reason about abstract biases produces challenges that distract rather than correct.
 
 **Key finding: Task-abstraction gradient**
 
-The effect is task-dependent. On the auth overhaul task — which requires identifying concrete technical vulnerabilities (bus factor=1, HS256 weakness, migration risk) — Sonnet achieves 5/5 regardless of method. This reveals a task-abstraction gradient: context-asymmetric debate is upper-bounded by the base model's capacity to reason about the specific class of findings. Abstract judgment requires frontier-class models; concrete technical identification works across model sizes.
-
-**Key finding: Weak Fresh sessions can be adversarial**
-
-When the base model lacks sufficient capability, the Fresh session's zero-context position may degrade rather than improve the outcome. Sonnet Ploidy 2n (2.5/5 effective) slightly underperforms Sonnet Single (3.0/5 effective) on the DB migration task — the Fresh session's inability to reason about abstract biases produces challenges that distract rather than correct.
+The effect is task-dependent. On the auth overhaul task (concrete technical), Sonnet achieves 5/5 regardless of method. On the DB migration task (abstract socio-technical judgment), Sonnet fails. This reveals a task-abstraction gradient: abstract judgment requires frontier-class models; concrete technical identification works across model sizes.
 
 ### Experiment 6: Effort Level Sweep (low/high/max)
 
@@ -385,9 +386,9 @@ When the base model lacks sufficient capability, the Fresh session's zero-contex
 | high | **4.5/5** | 4.0/5 | 0.634 | **0.650** | 229s |
 | max | 3.5/5 | 3.0/5 | 0.475 | 0.482 | 306s |
 
-**Key finding: Effort is not monotonically beneficial**
+**Key finding: Effort interacts non-trivially with method**
 
-effort=max produces the worst recall for both methods (Single 3.5/5, Ploidy 3.0/5). The model appears to overthink at maximum effort, generating over-elaborate analyses that diverge from ground-truth findings. This is consistent with known overthinking effects in extended reasoning models.
+Averaged results show max effort producing the lowest recall for both methods (Single 3.5/5, Ploidy 3.0/5). However, per-task analysis reveals high variance: Single at max effort achieved 5/5 on some tasks. The averaged degradation at max effort is driven by specific task–effort interactions rather than a uniform overthinking effect.
 
 **Key finding: effort=low is cost-optimal for recall**
 
@@ -401,7 +402,7 @@ Ploidy outperforms Single on F1 only at effort=high (0.650 vs 0.634). At effort=
 
 - N=1 per condition (no repeated trials). Stochastic variance in LLM outputs means these are point estimates, not statistically significant results.
 - Task set is small (3 long-context, 2 short-context). Workshop paper requires 5-10; full paper requires 30+.
-- Cross-model validation limited to two models in the same family (Opus/Sonnet). Different model families (GPT, Gemini) needed.
+- Cross-model validation covers 4 families (Opus, Sonnet, Gemini, Codex/GPT-5.4) but each has only 3 tasks per ploidy level.
 - F1 metric is sensitive to bonus findings count, which varies stochastically. Recall is more stable but ignores precision.
 - Judge model is the same as the evaluated model (self-evaluation bias possible).
 - Ploidy sweep used only 2 tasks — the 2n optimality finding needs validation on a larger task set.
