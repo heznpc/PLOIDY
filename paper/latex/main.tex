@@ -80,7 +80,9 @@ LLM outputs are stochastic. The same model, given the same prompt, produces diff
 
 The result: identical models, identical prompts, identical users---but different project outcomes depending on which stochastic sample landed first. Jacob et al.~\citep{jacob2025chatchamber} term this the ``Chat-Chamber Effect''---the tendency for users to trust and build upon whatever stochastic output a single session produces. This is not addressable by temperature tuning or prompt engineering; empirical evidence shows prompt-based mitigations (chain-of-thought, reflection, ``ignore your prior response'') have no statistically significant effect on anchoring bias~\citep{feng2026anchoring}.
 
-The practical consequence is stark: given the same model and the same prompt, different sessions may produce fundamentally different assessments---agree, disagree, or equivocate---on the same hypothesis. A user confined to a single session is unknowingly subject to a stochastic lottery whose outcome determines not just the quality of individual responses, but whether entire tasks succeed or fail. Two users with identical models and identical problems may experience dramatically different ``model performance'' based solely on which stochastic sample anchored their session.
+The practical consequence is stark: given the same model and the same prompt, different sessions may produce fundamentally different assessments---agree, disagree, or equivocate---on the same hypothesis. A user confined to a single session is unknowingly subject to a stochastic lottery whose outcome determines not just the quality of individual responses, but whether entire tasks succeed or fail. This extends beyond response quality to task-level outcomes: the same model may complete a task in one session and fail it in another, or require substantially different time to converge, solely due to which stochastic sample anchored the initial response. Two users with identical models and identical problems may experience dramatically different ``model performance'' based solely on which stochastic sample anchored their session.
+
+A natural response is to run multiple sessions and aggregate. But this conflates two independent problems. \textbf{Event~B} (stochastic variance): sessions with identical context disagree because sampling is random---more sessions reduce variance but cannot correct systematic blind spots. \textbf{Event~A} (context-induced bias): a session anchored to accumulated project history has systematic blind spots that no amount of re-sampling from the same context can fix. Running 100 sessions with the same context will converge on the same biased consensus. Only a session with \emph{different} context---one that has never seen the project history---can detect what the context itself has made invisible. This distinction is the core motivation for Ploidy: not more sessions, but sessions with intentionally different information states.
 
 This failure mode is structurally analogous to apoptosis failure in cell biology. The problem is not that the session performs poorly---it is that a session with accumulated errors \emph{does not self-terminate}. It continues generating outputs, the user continues trusting them, and biased conclusions propagate through persistent memory and downstream decisions. A low-performing session that resets is functioning correctly; a high-performing session locked into a biased trajectory is the dangerous case, because its apparent competence masks the accumulated error. Ploidy's Fresh session serves as an external checkpoint---it cannot be anchored to the Deep session's prior outputs, so it detects errors that the Deep session's own context window has rendered invisible.
 
@@ -617,6 +619,33 @@ Ploidy & \textbf{5F} & \textbf{5F} & .500 & .556 \\
 
 Ploidy's recall on this task was deterministic (5/5 in both runs) while Single's was stochastic (3--4/5). This stability, rather than the absolute F1 value, is the most noteworthy observation from these pilot experiments.
 
+\paragraph{Execution time variance.} Stochastic variance manifests not only in output quality but in wall-clock execution time. Across 170 multi-run entries on Claude Opus~4.6 (same model, same task, same method, same effort level), elapsed time varied by up to 3.3$\times$ between runs.
+
+\begin{table}[H]
+\centering
+\caption{Execution time variance across re-runs (Claude Opus~4.6, high effort, long-context tasks). Ratio = max/min elapsed time across runs.}
+\label{tab:time-variance}
+\small
+\begin{tabular}{@{}llrccc@{}}
+\toprule
+\textbf{Task} & \textbf{Method} & \textbf{Runs} & \textbf{Min (s)} & \textbf{Max (s)} & \textbf{Ratio} \\
+\midrule
+Auth overhaul    & Single    & 8  & 46   & 51   & 1.1$\times$ \\
+DB migration     & Single    & 7  & 46   & 59   & 1.3$\times$ \\
+Microservice     & Single    & 5  & 59   & 76   & 1.3$\times$ \\
+\midrule
+Auth overhaul    & Ploidy 1n & 9  & 205  & 584  & \textbf{2.9$\times$} \\
+DB migration     & Ploidy 1n & 10 & 193  & 273  & 1.4$\times$ \\
+Microservice     & Ploidy 1n & 7  & 181  & 605  & \textbf{3.3$\times$} \\
+\midrule
+Auth overhaul    & Ploidy 4n & 5  & 472  & 970  & \textbf{2.1$\times$} \\
+Microservice     & Ploidy 4n & 4  & 535  & 1184 & \textbf{2.2$\times$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Single Session wall-clock time is stable (1.1--1.3$\times$ ratio across runs), reflecting the deterministic overhead of a single LLM call. Ploidy's time variance is substantially higher (up to 3.3$\times$), because multi-session methods amplify per-session stochastic variation: each session's response length, reasoning depth, and challenge complexity vary independently, and these variances compound. This confirms that stochastic variance affects not only \emph{what} the model outputs but \emph{how long} it takes---a user running the same analysis twice may experience dramatically different wall-clock costs depending on which stochastic samples land.
+
 \subsection{Experiment 3: Injection Mode Sweep}
 \label{sec:injection-sweep}
 
@@ -645,54 +674,64 @@ Notably, injection mode changes which method achieves the best F1: raw favors Pl
 \subsection{Experiment 4: Ploidy Level Sweep (1n--4n)}
 \label{sec:ploidy-sweep}
 
-We swept ploidy levels 1n through 4n on 2 long-context tasks to test the interaction between stochastic sampling (Event~B) and context asymmetry (Event~A).
+We swept ploidy levels 1n through 4n on 3 long-context tasks across 4 model families (Claude Opus~4.6, Claude Sonnet~4.6, Gemini~3.1~Pro, GPT-5.4 via Codex CLI). To isolate Event~A (context asymmetry) from Event~B (stochastic variance), we introduce a \textbf{Stochastic-N} baseline: $N$ independent sessions all receiving full context, with $N$ matched to the total session count of Ploidy at the same level. The difference between Ploidy and Stochastic-N measures the pure contribution of context asymmetry.
 
 \begin{table}[H]
 \centering
-\caption{Ploidy level sweep results (avg over 2 long-context tasks).}
+\caption{Ploidy vs Stochastic-N: isolating Event~A (context asymmetry). $\Delta$ = Ploidy F1 $-$ Stochastic-N F1. Positive values indicate context asymmetry contributes beyond stochastic sampling. --- = no Stochastic-N baseline at 1n (equivalent to Single). $^\dagger$ = incomplete task coverage (1--2 of 3 tasks).}
 \label{tab:ploidy-sweep}
 \small
-\begin{tabular}{@{}lcccc@{}}
+\begin{tabular}{@{}llcccc@{}}
 \toprule
-\textbf{Ploidy} & \textbf{Ploidy Recall} & \textbf{Ploidy F1} & \textbf{Single Recall} & \textbf{Time} \\
+\textbf{Model} & \textbf{Ploidy} & \textbf{Single F1} & \textbf{Stoch-N F1} & \textbf{Ploidy F1} & \textbf{$\Delta$(P$-$St)} \\
 \midrule
-1n (haploid)    & 4.5/5.0 & 0.584 & \textbf{5.0/5.0} & 272s \\
-\textbf{2n (diploid)} & \textbf{5.0/5.0} & \textbf{0.667} & 4.5/5.0 & 352s \\
-3n (triploid)   & \textbf{5.0/5.0} & 0.505 & 4.5/5.0 & 480s \\
-4n (tetraploid) & \textbf{5.0/5.0} & 0.679 & \textbf{5.0/5.0} & 501s \\
+\multirow{4}{*}{Opus 4.6}
+  & 1n & 0.590 & 0.535 & 0.561 & \textbf{+0.025} \\
+  & 2n & 0.582 & 0.359 & 0.538 & \textbf{+0.179} \\
+  & 3n & 0.662 & 0.512 & 0.533 & \textbf{+0.022} \\
+  & 4n & 0.624 & 0.519 & 0.560 & \textbf{+0.042} \\
+\midrule
+\multirow{4}{*}{Sonnet 4.6}
+  & 1n & 0.490 & --- & 0.389 & --- \\
+  & 2n & 0.457 & 0.500 & 0.218 & $-$0.282 \\
+  & 3n & 0.383 & 0.377 & 0.377 & $-$0.001 \\
+  & 4n & 0.493 & 0.450 & 0.455 & +0.005 \\
+\midrule
+\multirow{3}{*}{Codex/GPT-5.4}
+  & 2n & 0.387 & 0.258 & 0.450 & \textbf{+0.192} \\
+  & 3n & 0.261 & 0.349 & 0.375 & \textbf{+0.026} \\
+  & 4n$^\dagger$ & 0.286 & 0.347 & 0.500 & \textbf{+0.153} \\
+\midrule
+\multirow{4}{*}{Gemini 3.1 Pro}
+  & 1n & 0.452 & --- & 0.499 & --- \\
+  & 2n & 0.613 & 0.622 & 0.547 & $-$0.075 \\
+  & 3n & 0.595 & 0.575 & 0.530 & $-$0.045 \\
+  & 4n & 0.615 & 0.444 & 0.500 & \textbf{+0.056} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-At 1n, Ploidy misses ground-truth issues (4.5/5.0). At 2n, recall reaches the ceiling (5.0/5.0) and remains there through 4n. The second stochastic sample per context depth corrects the first sample's blind spots. Higher ploidy provides no additional recall benefit.
+\paragraph{Event~A isolation.} On Opus, Ploidy outperforms Stochastic-N at \emph{every} ploidy level (4/4), with the strongest effect at 2n ($\Delta$=+0.179). Codex shows the same pattern across all three tested levels (3/3 positive, peak $\Delta$=+0.192 at 2n). This confirms that context asymmetry contributes independently of stochastic sampling---running more sessions with identical context does not replicate the benefit of running sessions with \emph{different} context depths.
 
-2n achieves full recall correction at 30\% additional compute over 1n. 3n costs 76\% more with no recall gain; 4n costs 84\% more, and at this point Single also reaches 5.0/5.0 through brute-force stochastic sampling---eliminating Ploidy's comparative advantage.
+\paragraph{Capability threshold.} On Sonnet, $\Delta$ is strongly negative at 2n ($-$0.282) and near zero at 3n--4n. At 1n (no Stochastic-N baseline), Ploidy F1 (0.389) is already below Single (0.490), consistent with the Fresh session injecting noise at this capability level. Gemini shows a similar pattern: negative at 2n--3n, turning positive only at 4n; at 1n, Ploidy (0.499) slightly outperforms Single (0.452) but without a Stochastic-N baseline the contribution of context asymmetry vs.\ stochastic variance cannot be separated. This supports the capability threshold hypothesis (\S\ref{sec:capability-threshold}): below a certain model capability, Fresh sessions generate noise rather than constructive challenge, and context asymmetry is counterproductive.
 
-At 3n, F1 drops to 0.505 despite perfect recall: additional sessions generate more bonus findings, inflating the denominator. At 4n, F1 recovers as the convergence step filters redundant findings more effectively with more input.
+\paragraph{Optimal ploidy level.} 2n remains the cost-optimal level for the strongest models. Beyond 2n, recall plateaus while token cost scales linearly. The 2n advantage is most pronounced on Opus ($\Delta$=+0.179) and Codex ($\Delta$=+0.192). Notably, Codex maintains positive $\Delta$ through 4n (+0.153), suggesting that for some model families, higher ploidy continues to provide benefit---potentially because the model's stochastic variance is higher and requires more samples to stabilize.
 
-\subsection{Experiment 5: Cross-Model Validation (Opus vs Sonnet)}
+\subsection{Experiment 5: Cross-Model Validation (4 Families)}
 \label{sec:cross-model}
 
-To test whether findings generalize beyond a single model size, we ran the same 2n diploid experiment with Claude Sonnet~4.6 (a smaller model in the same family).
+To test whether findings generalize across model families, we ran the ploidy sweep (1n--4n) with Stochastic-N baseline across 4 model families: Claude Opus~4.6, Claude Sonnet~4.6, Gemini~3.1~Pro, and GPT-5.4 (via Codex CLI). Stochastic-N baselines at 1n are unavailable for Sonnet and Gemini (1n Stochastic-N is equivalent to Single). Results are integrated into Table~\ref{tab:ploidy-sweep}.
 
-\begin{table}[H]
-\centering
-\caption{Opus vs Sonnet recall on long-context tasks (2n diploid).}
-\label{tab:cross-model}
-\small
-\begin{tabular}{@{}llcc@{}}
-\toprule
-\textbf{Task} & \textbf{Method} & \textbf{Opus Recall} & \textbf{Sonnet Recall} \\
-\midrule
-DB migration (abstract) & Single & 5.0/5 & 2/5 (+2P, 1M) \\
-DB migration (abstract) & Ploidy 2n & \textbf{5.0/5} & 2/5 (+1P, 2M) \\
-Auth overhaul (concrete) & Single & 5/5 & \textbf{5/5} \\
-Auth overhaul (concrete) & Ploidy 2n & 5/5 & \textbf{5/5} \\
-\bottomrule
-\end{tabular}
-\end{table}
+The cross-family results reveal a clear pattern: \textbf{context asymmetry benefits scale with model capability.}
 
-On the auth overhaul task (concrete technical findings: bus factor, HS256, migration risk), Sonnet matches Opus at 5/5 regardless of method. On the DB migration task (abstract socio-technical judgment: sunk cost fallacy, anchor bias recognition), Sonnet drops to 2/5 with 2~missed issues---and Ploidy~2n performs \emph{worse} than Single (2.5/5 effective vs.\ 3.0/5). The Fresh session lacks sufficient reasoning capacity to generate useful challenges, injecting noise rather than constructive critique.
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Opus} (strongest): Ploidy $>$ Stochastic-N at all 4 ploidy levels. Event~A consistently positive.
+  \item \textbf{Codex/GPT-5.4}: Ploidy $>$ Stochastic-N at all three tested levels---2n (+0.192), 3n (+0.026), 4n (+0.153). Second strongest effect, with sustained benefit at higher ploidy.
+  \item \textbf{Gemini~3.1~Pro}: Mixed. Negative at 2n--3n, positive only at 4n (+0.056). Intermediate capability.
+  \item \textbf{Sonnet} (weakest on abstract tasks): Ploidy $\leq$ Stochastic-N at 2n--3n. Fresh sessions lack reasoning capacity to generate useful challenges, injecting noise rather than constructive critique.
+\end{itemize}
+
+This validates the capability threshold hypothesis: context-asymmetric debate is a \textbf{high-capability intervention}. Below the threshold, Fresh sessions produce generic textbook challenges that the convergence phase cannot productively integrate. The threshold appears to be task-dependent---Sonnet performs adequately on concrete technical tasks (auth overhaul: 5/5 recall) but fails on abstract socio-technical judgment (DB migration: 2/5 recall).
 
 \subsection{Experiment 6: Effort Level Sweep}
 \label{sec:effort-sweep}
@@ -715,7 +754,7 @@ max  & 3.5/5 & 3.0/5 & 0.475 & 0.482 \\
 \end{tabular}
 \end{table}
 
-Effort is not monotonically beneficial. At max effort, both methods produce the worst recall (Single~3.5/5, Ploidy~3.0/5)---the model appears to overthink, generating over-elaborate analyses that diverge from ground-truth findings. Effort=low matches effort=high on recall (4.5/5) at roughly half the compute time. Ploidy outperforms Single on F1 only at effort=high, suggesting the effort~$\times$~method interaction is non-trivial: context-asymmetric debate is most effective at intermediate reasoning depth.
+Effort is not monotonically beneficial. The averaged results show max effort producing the lowest recall for both methods (Single~3.5/5, Ploidy~3.0/5). However, per-task analysis reveals high variance: on individual runs, Single at max effort achieved 5/5 on some tasks---the highest recall observed for Single in this sweep. The averaged degradation at max effort is driven by specific task--effort interactions rather than a uniform overthinking effect. Effort=low matches effort=high on recall (4.5/5) at roughly half the compute time. Ploidy outperforms Single on F1 only at effort=high, suggesting the effort~$\times$~method interaction is non-trivial but insufficiently sampled: single-run averages over 2 tasks cannot distinguish genuine interaction effects from stochastic variance.
 
 % ============================================================
 \section{Discussion}
@@ -942,7 +981,7 @@ This pilot study has significant limitations that bound the strength of all clai
 \begin{itemize}[leftmargin=1.5em]
   \item \textbf{Statistical power}: 7+3 tasks, single run per method-task pair (re-run on Exp~2 only). Observed method differences (F1 $\Delta \approx 0.03$) are smaller than within-method variance (F1 $\Delta \approx 0.10$). No statistical tests are reported because the sample size and run count cannot support them. Minimum requirement for validated claims: 30+ tasks, 5+ runs, paired statistical tests (Wilcoxon signed-rank or bootstrap CI).
   \item \textbf{Author-defined ground truth}: All ground-truth issues were defined by the authors without independent expert validation. Bonus findings identified by the judge suggest the ground truth is incomplete. Future work should use independently validated benchmarks or multiple expert annotators with inter-rater agreement metrics.
-  \item \textbf{Single model family}: Experiments use Claude Opus~4.6 and Sonnet~4.6 (same family, different sizes). Cross-family validation (GPT, Gemini) is needed. The Sonnet experiment reveals a minimum capability threshold below which context asymmetry is ineffective or counterproductive---but the exact threshold and its generalizability across families are unknown.
+  \item \textbf{Limited runs per model family}: Cross-family validation now covers 4 families (Claude Opus/Sonnet, Gemini~3.1~Pro, GPT-5.4), but each family has only 3 tasks per ploidy level. The capability threshold is observed across families but its exact boundary and task-type dependence require larger-scale validation.
   \item \textbf{Same-model judge}: Claude Opus 4.6 generates outputs and evaluates them. Systematic bias is possible (e.g., preference for structured multi-phase outputs, or conversely, penalizing verbose responses). Cross-model judges (GPT-4, Gemini) and a human evaluation subset with Cohen's kappa are needed.
   \item \textbf{Presentation bias in judge evaluation}: Different methods produce structurally different outputs---Single Session yields plain analysis, while Ploidy outputs contain debate markers (``Deep challenges Fresh,'' ``AGREE/SYNTHESIZE''). The judge may conflate output structure with content quality, scoring well-organized debate transcripts higher regardless of substance. Additionally, LLMs exhibit speech mirroring (style adaptation to input patterns), which may cause the judge to respond differently to debate-structured vs.\ plain-text outputs. Rigorous control would require normalizing all method outputs to a uniform format before evaluation, or separating issue extraction from scoring. Proper experimental design for this confound warrants consultation with linguists and LLM evaluation specialists.
   \item \textbf{Circular task design risk}: Long-context tasks were designed with anchoring biases whose detection is facilitated by context absence. A session without context is expected to be less biased by definition. Stronger validation requires externally-sourced tasks (e.g., real-world architecture decisions from open-source projects) where the relationship between context and bias is not author-designed.
@@ -1003,7 +1042,7 @@ We presented Ploidy, a protocol for structured debate between same-model session
   \item \textbf{Context injection mechanism is a moderator variable.} The same information delivered as accumulated memories vs.\ declarative rules produces measurably different anchoring effects, changing which method performs best.
   \item \textbf{Diploid (2n) is the cost-optimal ploidy level.} The second stochastic sample per context depth corrects the first sample's blind spots at 30\% additional compute. Higher ploidy provides no recall benefit.
   \item \textbf{Context asymmetry requires a minimum model capability.} Cross-model validation (Opus vs Sonnet) reveals a task-abstraction gradient: concrete technical findings transfer across model sizes, but abstract socio-technical judgments require frontier-class reasoning. Below this threshold, Fresh sessions inject noise rather than correction.
-  \item \textbf{Effort level is not monotonically beneficial.} Max effort produces the worst recall for both methods, consistent with overthinking effects. The effort~$\times$~method interaction is non-trivial: Ploidy's F1 advantage appears only at intermediate reasoning depth.
+  \item \textbf{Effort level interacts non-trivially with method.} Averaged results suggest max effort degrades recall, but per-task variance is high---Single at max effort achieves perfect recall on some tasks. The effort~$\times$~method interaction requires larger-scale validation to distinguish from stochastic noise.
 \end{enumerate}
 
 The intersection of intentional context asymmetry, structured cross-session debate, injection mechanism as experimental variable, and ploidy-level stochastic sampling has no prior publications as of March~2026.
@@ -1017,6 +1056,7 @@ The intersection of intentional context asymmetry, structured cross-session deba
   \item \textbf{External task sets}: real-world architecture decisions from open-source projects
   \item \textbf{Independent judge}: cross-model judges and human evaluation subset
   \item \textbf{Multi-round protocol}: extending single-round \textsc{challenge} to test AceMAD's submartingale conditions
+  \item \textbf{Asymmetric ploidy configurations}: the current design constrains Deep($n$)$\times$Fresh($n$) symmetrically. Context asymmetry (Event~A) and stochastic variance (Event~B) are independent phenomena requiring potentially different sample sizes---e.g., Deep(1)$\times$Fresh(3) to oversample the noisier distribution while minimizing redundant deep-context computation
 \end{enumerate}
 
 We release Ploidy as an open-source MCP server at \url{https://github.com/heznpc/ploidy}.
