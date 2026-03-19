@@ -236,6 +236,7 @@ def _call_codex(prompt: str, model: str, effort: str, system_prompt: str = None)
             return f.read().strip()
     finally:
         import os
+
         os.unlink(outfile) if os.path.exists(outfile) else None
 
 
@@ -1713,9 +1714,7 @@ if __name__ == "__main__":
         run_injection_sweep(task_ids, method_ids, sweep_modes)
     elif args.ploidy_sweep:
         sweep_levels = (
-            [int(x) for x in args.ploidy_levels.split(",")]
-            if args.ploidy_levels
-            else None
+            [int(x) for x in args.ploidy_levels.split(",")] if args.ploidy_levels else None
         )
         run_ploidy_sweep(task_ids, method_ids, sweep_levels)
     else:
