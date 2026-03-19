@@ -85,13 +85,17 @@ async def generate_response(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
+    # Map effort level to max_tokens budget
+    effort_tokens = {"low": 1024, "medium": 2048, "high": 4096, "max": 8192}
+    effective_max_tokens = effort_tokens.get(effort, max_tokens)
+
     last_error: Exception | None = None
     for attempt in range(_MAX_RETRIES):
         try:
             response = await client.chat.completions.create(
                 model=model or _API_MODEL,
                 messages=messages,
-                max_tokens=max_tokens,
+                max_tokens=effective_max_tokens,
             )
             return response.choices[0].message.content or ""
         except Exception as e:
