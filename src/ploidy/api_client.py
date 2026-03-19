@@ -17,10 +17,14 @@ Environment variables:
     PLOIDY_API_MODEL: Model identifier (default: claude-opus-4-6)
 """
 
+import asyncio
 import logging
 import os
 
 logger = logging.getLogger("ploidy.api")
+
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +50,7 @@ async def _get_client():
             "openai package required for v0.2 API fallback. Install with: pip install ploidy[api]"
         )
 
-    kwargs = {"api_key": _API_KEY or "not-needed"}
+    kwargs = {"api_key": _API_KEY or "not-needed", "timeout": 120.0}
     if _API_BASE_URL:
         kwargs["base_url"] = _API_BASE_URL
     return AsyncOpenAI(**kwargs)
@@ -81,16 +85,33 @@ async def generate_response(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    try:
-        response = await client.chat.completions.create(
-            model=model or _API_MODEL,
-            messages=messages,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content or ""
-    except Exception as e:
-        logger.error("API call failed: %s", e)
-        raise RuntimeError(f"Ploidy API call failed: {e}") from e
+    last_error: Exception | None = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            response = await client.chat.completions.create(
+                model=model or _API_MODEL,
+                messages=messages,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            last_error = e
+            # Import error types available at runtime
+            retryable = ("RateLimitError", "APITimeoutError", "APIConnectionError")
+            if type(e).__name__ in retryable and attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_BASE_DELAY * (2**attempt)
+                logger.warning(
+                    "API call failed (attempt %d/%d, retrying in %.1fs): %s",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    delay,
+                    e,
+                )
+                await asyncio.sleep(delay)
+                continue
+            logger.error("API call failed: %s (%s)", e, type(e).__name__)
+            raise RuntimeError(f"Ploidy API call failed: {e}") from e
+    raise RuntimeError(f"Ploidy API call failed after {_MAX_RETRIES} retries: {last_error}")
 
 
 async def generate_fresh_position(

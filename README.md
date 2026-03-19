@@ -21,7 +21,8 @@ Ploidy takes the orthogonal approach: **deliberately create context asymmetry wi
 
 ```bash
 # Install
-pip install ploidy
+pip install ploidy              # core server
+pip install ploidy[api]         # + auto-debate mode (requires OpenAI SDK)
 
 # Start the server
 python -m ploidy
