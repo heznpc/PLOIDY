@@ -6,7 +6,7 @@ def test_render_debate_list_escapes_prompt_and_id():
         [
             {
                 "id": 'abc"><script>alert(1)</script>',
-                "prompt": '<img src=x onerror=alert(1)>',
+                "prompt": "<img src=x onerror=alert(1)>",
                 "status": "active",
                 "created_at": "2026-03-19",
             }
@@ -23,7 +23,7 @@ def test_render_debate_detail_escapes_transcript_and_synthesis():
     html = dashboard._render_debate_detail(
         {
             "id": "d1",
-            "prompt": '<b>prompt</b>',
+            "prompt": "<b>prompt</b>",
             "status": "complete",
             "created_at": "2026-03-19",
             "sessions": [{"id": "s1", "role": "experienced"}],
