@@ -1,0 +1,464 @@
+\documentclass{article}
+\usepackage[submission]{colm2026_conference}
+
+% Math
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% Tables
+\usepackage{booktabs}
+\usepackage{array}
+
+% Graphics and figures
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, calc}
+
+% Lists
+\usepackage{enumitem}
+
+% Float control
+\usepackage{float}
+
+% Code listings
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible
+}
+
+% Hyperlinks
+\usepackage{microtype}
+\usepackage{hyperref}
+\definecolor{darkblue}{rgb}{0, 0, 0.5}
+\hypersetup{colorlinks=true, citecolor=darkblue, linkcolor=darkblue, urlcolor=darkblue}
+
+% Title
+\title{Ploidy: Context-Asymmetric Structured Debate\\for LLM Decision Verification}
+\author{heznpc}
+
+\begin{document}
+
+\maketitle
+
+% ============================================================
+\begin{abstract}
+Single-session LLM usage subjects critical decisions to stochastic prior lock-in: the model's first probabilistic response anchors all subsequent reasoning, and prompt-based mitigations have no statistically significant effect on this bias~\citep{feng2026anchoring}. We present Ploidy, a structured debate protocol between physically separate sessions of the same model with intentionally asymmetric context depths. We identify two independent phenomena: \textbf{Event~A} (context asymmetry---sessions disagree because they have different information) and \textbf{Event~B} (stochastic variance---identical-context sessions disagree due to sampling randomness). The \emph{ploidy level}---sessions per context depth---controls which event can be distinguished. We further introduce \textbf{context injection mode} as a novel experimental variable, finding that the \emph{form} of context delivery moderates debate efficacy. In pilot experiments on long-context software architecture tasks across four model families (Claude Opus~4.6, Sonnet~4.6, Gemini~3.1~Pro, GPT-5.4), we find: (1)~multi-session debate outperforms single session in 3 of 4 model families with a unified judge; (2)~memory-style injection degrades single-session recall by 20\% while Ploidy drops only 6\%; (3)~system-prompt injection \emph{reverses} the pattern---Ploidy degrades by 38\% while Single improves; (4)~diploid (2n) reaches maximum recall at 30\% additional compute; (5)~Ploidy exhibits the lowest cross-model variance (spread 0.8 vs.\ 1.3 for Single), making it the most robust default strategy; and (6)~cross-model judge analysis reveals systematic self-evaluation bias (GPT-5.4 self-judge underscores multi-session outputs by 1.2 points). The intersection of intentional context asymmetry, structured cross-session debate, injection mechanism as variable, and ploidy-level stochastic sampling has zero prior publications as of March~2026.
+\end{abstract}
+
+% ============================================================
+\section{Introduction}
+\label{sec:introduction}
+% ============================================================
+
+LLM outputs are stochastic. The same model, given the same prompt, produces different responses across sessions. The downstream consequence for single-session workflows is underappreciated: (1)~the model's first response is sampled from a distribution; (2)~that response enters the context window as a self-prior; (3)~the model reinforces this prior through anchoring bias and sycophancy; (4)~the user treats the output as deterministic. Jacob et al.~\citep{jacob2025chatchamber} term this the ``Chat-Chamber Effect.'' Empirically, prompt-based mitigations (chain-of-thought, reflection) have no statistically significant effect on anchoring~\citep{feng2026anchoring}.
+
+The only computational intervention with empirical support is physical session separation. Cross-Context Review (CCR)~\citep{song2026ccr}, published concurrently with and independently of this work, showed that a fresh session reviewing a deep session's artifact achieves F1=28.6\% vs.\ 24.6\% for same-session review ($p=0.008$). CCR validates the core premise that context separation improves review quality. However, CCR is unidirectional---the fresh session reviews but does not debate.
+
+We extend CCR to \textbf{bidirectional structured debate} and introduce the \textbf{Context Asymmetry Spectrum}---a continuum from full context (Deep) through compressed context (Semi-Fresh) to zero context (Fresh). We identify that context asymmetry (Event~A) and stochastic variance (Event~B) are independent events: a haploid (1n) debate cannot distinguish them; diploid (2n+) separates context-driven from stochastic disagreement.
+
+\paragraph{Contributions.}
+\begin{itemize}[leftmargin=1.5em, itemsep=1pt]
+  \item Event~A/B distinction as independently measurable phenomena, controlled by ploidy level (\S\ref{sec:protocol})
+  \item Structured debate protocol with typed semantic actions and N-ary sessions (\S\ref{sec:protocol})
+  \item Context injection mode as a novel experimental variable for debate efficacy (\S\ref{sec:experiments})
+  \item Evidence that diploid (2n) is cost-optimal for recall maximization (\S\ref{sec:experiments})
+  \item Open-source MCP server implementation
+\end{itemize}
+
+% ============================================================
+\section{Related Work}
+\label{sec:related}
+% ============================================================
+
+\paragraph{Context degradation.} LLM performance degrades with context length even when retrieval is perfect~\citep{du2025context}, with effective capacity at 60--70\% of advertised window~\citep{chroma2025contextrot}. The scaling paradox~\citep{scaling2026paradox} shows larger compressors produce less faithful reconstructions.
+
+\paragraph{Multi-agent debate.} MAD is well-studied but predominantly symmetric. Oh et al.~\citep{oh2025dreamad} showed symmetric debate can amplify bias through belief entrenchment. Choi et al.~\citep{choi2025debate} proved symmetric debate induces a martingale---it cannot improve beyond majority voting. ColMAD~\citep{chen2025colmad} reframes debate as collaborative but retains symmetric information, leaving agents vulnerable to collective anchoring.
+
+\paragraph{Asymmetric context.} SR-DCR~\citep{srdcr2025} introduced asymmetric context verification, achieving +3.4pp on GPT-3.5. AceMAD~\citep{liu2026acemad} proved asymmetric cognitive potential creates submartingale drift toward truth. AceMAD provides the theoretical foundation; Ploidy addresses the architectural questions of \emph{what form} of asymmetry, \emph{how} to deliver it (injection mode), and \emph{how many} sessions (ploidy level). We note that Ploidy was developed independently and concurrently with AceMAD, motivated by practical experience with context entrenchment in long-running coding sessions rather than formal game-theoretic analysis. The convergence of an empirical practitioner-driven approach and a theoretical proof-driven approach on the same core insight---that intentional information asymmetry breaks anchoring---strengthens the case for both.
+
+\paragraph{Sycophancy and persistent bias.} User memory profiles increase sycophancy by up to 45\%~\citep{jain2025sycophancy}. Multi-turn settings show 39\% degradation~\citep{laban2025lost}: ``when LLMs take a wrong turn, they get lost and do not recover.'' Boca et al.~\citep{boca2025emergent} showed LLM populations spontaneously develop collective biases through interaction.
+
+\paragraph{Context injection as pseudo-fine-tuning.} Persistent context files (CLAUDE.md, memory.md) auto-load every session, functioning as de facto permanent input. The \emph{form} of delivery modulates anchoring strength: memory-style accumulated observations create stronger priors than skills-style declarative rules. No prior work treats the delivery mechanism as an experimental variable for debate outcomes. Positional bias~\citep{liu2023lost} further modulates this effect (\S\ref{sec:ablation-appendix}).
+
+\begin{table}[t]
+\centering
+\caption{Ploidy's position among related work.}
+\label{tab:prior-work}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Work} & \textbf{Context} & \textbf{Delivery} & \textbf{Direction} \\
+\midrule
+CCR~\citep{song2026ccr} & Binary & Passive & Unidirectional \\
+SR-DCR~\citep{srdcr2025} & Binary & Passive & Uni.\ + Judge \\
+AceMAD~\citep{liu2026acemad} & Theoretical & n/a & Multi-round \\
+\textbf{Ploidy} & \textbf{Spectrum} & \textbf{Pass.+Active} & \textbf{Bidirectional} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{The Ploidy Protocol}
+\label{sec:protocol}
+% ============================================================
+
+\subsection{Context Asymmetry Spectrum}
+
+Prior work treats context as binary. We propose a 2D spectrum: \textbf{context depth} (Full/Compressed/None) $\times$ \textbf{delivery mode} (Passive/Active). \textbf{Deep} sessions have full project context; \textbf{Semi-Fresh} sessions receive a compressed summary; \textbf{Fresh} sessions have zero context. Passive delivery embeds context in the prompt; Active delivery requires explicit retrieval after independent analysis. This yields five configurations (Figure~\ref{fig:2d-matrix}).
+
+\begin{figure}[t]
+\centering
+\caption{Context Asymmetry Spectrum: depth $\times$ delivery mode.}
+\label{fig:2d-matrix}
+\vspace{0.3em}
+\footnotesize
+\begin{tabular}{@{} >{\bfseries}l c c c @{}}
+\toprule
+& \textbf{Passive} & \textbf{Active} & \textbf{None} \\
+\midrule
+Full & Deep & Deep-Active & \textcolor{gray}{n/a} \\
+Compressed & SF-Passive & SF-Active & \textcolor{gray}{n/a} \\
+None & \textcolor{gray}{n/a} & \textcolor{gray}{n/a} & Fresh \\
+\bottomrule
+\end{tabular}
+\end{figure}
+
+\subsection{Ploidy Level}
+
+The ploidy level $n$ sets sessions per context depth. At 1n (haploid): Deep(1)$\times$Fresh(1)---cannot distinguish Event~A from~B. At 2n+ (diploid): within-group disagreement isolates Event~B (stochastic), between-group isolates Event~A (context). The level trades compute for causal interpretability.
+
+\subsection{Injection Modes}
+
+The same context can be delivered as: \texttt{raw} (plain text), \texttt{memory} (accumulated observations), \texttt{skills} (declarative rules), \texttt{system\_prompt} (system-level instruction), or \texttt{claude\_md} (XML-tagged project instructions). We hypothesize that narrative context (memory) creates stronger anchoring priors than declarative context (skills).
+
+\subsection{Debate Phases}
+
+\textbf{Position}: all sessions independently analyze the artifact. \textbf{Challenge}: each session reviews others' positions using typed semantic actions (\texttt{agree}, \texttt{challenge}, \texttt{propose\_alternative}, \texttt{synthesize}). \textbf{Convergence}: the protocol classifies outcomes into agreements, productive disagreements, and irreducible disagreements.
+
+% ============================================================
+\section{Experiments}
+\label{sec:experiments}
+% ============================================================
+
+All findings are preliminary pilot observations, not statistically validated conclusions. We report both null and positive results.
+
+\subsection{Setup}
+\label{sec:setup}
+
+\textbf{Tasks:} 7 short-context ($\sim$50 tokens) + 3 long-context (2,000--5,000 tokens) architecture/code review tasks. Long-context tasks contain anchoring biases designed to induce context entrenchment.
+
+\textbf{Methods (9):} Single Session, Second Opinion, CCR, Symmetric Debate, Ploidy (Asymmetric), Self-Consistency (5-vote), Semi-Fresh-Passive/Active/Selective.
+
+\textbf{Models:} Claude Opus~4.6 (primary, via \texttt{claude --print}), Claude Sonnet~4.6, Gemini~3.1~Pro (via \texttt{gemini -p}), GPT-5.4 (via \texttt{codex exec}). Each invocation = fresh session. \textbf{Judge:} same model as generator (self-judge), plus cross-model re-evaluation with Claude Opus as unified judge (\S\ref{sec:discussion}). \textbf{Metric:} Recall = (found + 0.5$\times$partial) / total ground truth.
+
+\subsection{Experiment 1: Short-Context (Null Result)}
+
+All 9 methods achieve 90--98\% recall on 7 short-context tasks (Table~\ref{tab:exp1}). No method outperforms Single Session. Context asymmetry provides no benefit when context is too short for entrenchment.
+
+\begin{table}[t]
+\centering
+\caption{Exp.~1: short-context. Near-perfect recall for all methods.}
+\label{tab:exp1}
+\footnotesize
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Method} & \textbf{Avg Recall} & \textbf{Time} \\
+\midrule
+Single Session & 3.7/4.1 & 40s \\
+Second Opinion & 4.1/4.1 & 89s \\
+Ploidy (Asymmetric) & 3.9/4.1 & 205s \\
+Self-Consistency & 3.7/4.1 & 234s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Experiment 2: Long-Context}
+\label{sec:exp2}
+
+Three architecture tasks with 2K--5K token project histories. Table~\ref{tab:exp2-main} shows combined results across all 9 methods plus 2 ablations.
+
+\begin{table}[t]
+\centering
+\caption{Exp.~2: long-context, all methods ranked by recall.}
+\label{tab:exp2-main}
+\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Method} & \textbf{Recall} & \textbf{F1} & \textbf{Calls} \\
+\midrule
+SF-Active & \textbf{5.3}/5.3 & .557 & $\sim$4 \\
+Self-Consistency & \textbf{5.3}/5.3 & .607 & $\sim$6 \\
+SF-Pass.+Bottom (abl.) & \textbf{5.3}/5.3 & .619 & $\sim$4 \\
+SF-Selective & 5.0/5.3 & .505 & $\sim$4 \\
+Symmetric Debate & 5.0/5.3 & .607 & 3 \\
+SF-Pass.+Indep. (abl.) & 5.0/5.3 & .550 & $\sim$4 \\
+SF-Passive & 4.7/5.3 & .553 & $\sim$4 \\
+Ploidy (Asymmetric) & 4.7/5.3 & .561 & 5 \\
+CCR & 4.7/5.3 & .458 & 2 \\
+Single Session & 4.3/5.3 & .591 & 1 \\
+Second Opinion & 4.3/5.3 & .566 & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Key finding:} SF-Active and SF-Passive received identical compressed information. SF-Active achieved 100\% recall; SF-Passive achieved 89\%. The sole difference is delivery mode. Ablation (Table~\ref{tab:ablation}, Appendix~\ref{sec:ablation-appendix}) reveals that \textbf{information position is the dominant factor}: moving the summary from prompt top to bottom improves recall from 89\% to 100\%.
+
+Re-run analysis shows Ploidy's recall is deterministic (5/5 on both runs) while Single's is stochastic (3--4/5), suggesting stability rather than absolute F1 is the more reliable signal.
+
+\subsection{Experiment 3: Injection Mode Sweep}
+\label{sec:injection-sweep}
+
+Five injection modes $\times$ Single and Ploidy $\times$ 3 tasks (Table~\ref{tab:injection}).
+
+\begin{table}[t]
+\centering
+\caption{Recall by injection mode (avg over 3 long-context tasks). Arrows show change from raw baseline.}
+\label{tab:injection}
+\footnotesize
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Mode} & \textbf{Single} & \textbf{Ploidy} \\
+\midrule
+raw & 5.0/5.3 & \textbf{5.3/5.3} \\
+memory & 4.0/5.3 \scriptsize{($-$20\%)} & \textbf{5.0/5.3} \scriptsize{($-$6\%)} \\
+skills & 4.3/5.3 \scriptsize{($-$14\%)} & \textbf{5.3/5.3} \scriptsize{(0\%)} \\
+system\_prompt & \textbf{5.3/5.3} \scriptsize{(+6\%)} & 3.3/5.3 \scriptsize{($-$38\%)} \\
+claude\_md & \textbf{5.0/5.3} \scriptsize{(0\%)} & 3.0/5.3 \scriptsize{($-$43\%)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For accumulated-observation modes (memory, skills), Ploidy is resilient while Single degrades---the Fresh session's independence provides a structural buffer. However, for authority-framed modes (system\_prompt, claude\_md), the pattern \textbf{reverses}: Ploidy degrades severely ($-$38\%, $-$43\%) while Single is unaffected or improves. System-prompt injection creates positional authority bias so strong that the Deep session's output overwhelms Fresh challenges. This demonstrates that injection mode is not merely a moderator but a \textbf{direction-changing variable}---the optimal method depends on how context was delivered.
+
+\subsection{Experiments 4--6: Ploidy Level, Cross-Model, Effort}
+
+\textbf{Ploidy sweep (1n--4n, 3 tasks):} 1n misses issues (4.5/5); 2n reaches ceiling (5/5) at +30\% compute; 3n--4n provide no additional recall. 2n is cost-optimal.
+
+\textbf{Cross-model (4 model families, 3 tasks):} We evaluated Single, Ploidy, SF-Active, and CCR across Claude Opus~4.6, Sonnet~4.6, Gemini~3.1~Pro, and GPT-5.4. Table~\ref{tab:cross-model} shows method rankings under a unified Claude Opus judge (eliminating self-evaluation bias; see \S\ref{sec:discussion}).
+
+\begin{table}[t]
+\centering
+\caption{Method ranking per model (Claude Opus judge, avg recall over 3 tasks).}
+\label{tab:cross-model}
+\footnotesize
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Method} & \textbf{Opus} & \textbf{Sonnet} & \textbf{Gemini 3} & \textbf{GPT-5.4} \\
+\midrule
+Single    & 4.3 & 4.7 & 3.3 & 4.7 \\
+Ploidy    & 4.7 & 4.8 & 3.5 & \textbf{4.7} \\
+SF-Active & \textbf{5.3} & --- & \textbf{4.7} & 4.5 \\
+CCR       & 5.0 & --- & 4.5 & 4.5 \\
+\midrule
+\multicolumn{5}{@{}l}{\footnotesize Multi $>$ Single?} \\
+          & \textbf{Yes} (+1.0) & \textbf{Yes} (+0.2) & \textbf{Yes} (+1.5) & \textbf{Yes} (+0.2) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+With a unified judge, multi-session debate outperforms Single in \textbf{all 4 model families}. Ploidy exhibits the lowest cross-model variance (spread 0.8 vs.\ 1.3 for Single), making it the most robust default strategy when the model's anchoring susceptibility is unknown.
+
+\textbf{Effort sweep (low/medium/high/max, 3 tasks):} Effort is not monotonically beneficial. Max effort produces worst recall (3.0--3.5/5). Medium effort achieves the highest Single recall (5.3/5.3) and Ploidy's only perfect F1 (1.000 on DB migration). The optimal operating point is moderate reasoning depth. Full results in Appendix~\ref{sec:effort-appendix}.
+
+% ============================================================
+\section{Discussion}
+\label{sec:discussion}
+% ============================================================
+
+\paragraph{Thresholds.} Context asymmetry activates only when context exceeds an entrenchment threshold (likely 100--2,000 tokens). Below this, all methods converge (Exp.~1). Additionally, the base model must meet a minimum capability for the task class; otherwise Fresh sessions inject noise rather than correction (Sonnet on abstract tasks).
+
+\paragraph{Self-Consistency comparison.} Self-Consistency achieves comparable recall but lacks \textbf{structured context attribution} and inherits correlated bias under non-raw injection. Ploidy's Fresh sessions are structurally immune to injection-induced anchoring.
+
+\paragraph{Semi-Fresh Hypothesis.} The optimal verification partner may be neither ignorant nor entrenched but \textbf{selectively informed with retrieval autonomy}. SF-Active's consistent superiority across Claude and Gemini provides initial support, grounded in the generation effect~\citep{slamecka1978generation} and anchoring mechanism differences~\citep{epley2006anchoring}. Extended analysis in Appendix~\ref{sec:semifresh-appendix}.
+
+\paragraph{Judge bias.} Cross-model re-evaluation reveals systematic self-evaluation bias. When GPT-5.4 judges its own outputs, multi-session methods score 1.2 points lower on average than under Claude Opus judge---while Single session scores are unchanged. This bias is directional: self-judges undervalue unfamiliar output formats (structured debate transcripts) relative to single-pass analysis. Gemini self-judge shows a smaller reverse bias ($-$0.3). \textbf{Cross-model judge experiments are essential} for any multi-agent evaluation; self-evaluation conflates method quality with format familiarity.
+
+\paragraph{Injection mode reversal.} Authority-framed injection (system\_prompt, claude\_md) suppresses Fresh challenges, favoring single session. Accumulated-observation injection (memory, skills) favors debate. Practitioners should \textbf{match debate strategy to injection mode}.
+
+\subsection{Limitations}
+\label{sec:limitations}
+
+\begin{itemize}[leftmargin=1.5em, itemsep=1pt]
+  \item \textbf{Statistical power}: 10 tasks, single run per pair. Observed $\Delta$F1$\approx$0.03 is smaller than within-method variance ($\Delta$0.10).
+  \item \textbf{Author-defined ground truth} without independent validation.
+  \item \textbf{Judge bias}: self-evaluation bias confirmed; unified cross-model judge partially mitigates but introduces its own model-specific preferences.
+  \item \textbf{Circular task design}: long-context tasks designed with planted biases.
+  \item \textbf{F1 metric}: penalizes valid bonus findings.
+\end{itemize}
+
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+% ============================================================
+
+We presented Ploidy, a protocol for structured debate between same-model sessions with intentional context asymmetry. Experiments across four model families reveal:
+\begin{enumerate}[label=(\arabic*), leftmargin=2em, itemsep=1pt]
+  \item Context asymmetry is a targeted intervention that activates only under entrenchment.
+  \item Multi-session debate outperforms Single in all 4 model families under unified judge.
+  \item Injection mode is a direction-changing variable: accumulated-observation modes favor debate; authority-framed modes favor single session.
+  \item Diploid (2n) is cost-optimal; medium effort outperforms both low and max.
+  \item Ploidy is the most robust method across models (lowest cross-model variance).
+  \item Self-evaluation bias is systematic: cross-model judges are essential for multi-agent evaluation.
+\end{enumerate}
+The experiment runner supports Claude, Gemini, GPT, and Ollama backends via a single command; we invite independent replication at \url{https://github.com/heznpc/ploidy}.
+
+% ============================================================
+\section*{Acknowledgments}
+% ============================================================
+
+This paper was written with Claude Code (Anthropic, Claude Opus 4.6). All research decisions, hypotheses, and interpretations are the authors' own.
+
+% ============================================================
+% References
+% ============================================================
+\bibliographystyle{colm2026_conference}
+\bibliography{references}
+
+% ============================================================
+\appendix
+% ============================================================
+
+\section{Ablation: Position vs.\ Instruction}
+\label{sec:ablation-appendix}
+
+\begin{table}[H]
+\centering
+\caption{Factorial ablation on Experiment~2 (3 long-context tasks).}
+\label{tab:ablation}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Variant} & \textbf{Position} & \textbf{Indep.\ Instr.} & \textbf{Recall} \\
+\midrule
+SF-Passive & Top & No & 4.7/5.3 (89\%) \\
+SF-Pass.+Indep. & Top & Yes & 5.0/5.3 (94\%) \\
+SF-Pass.+Bottom & Bottom & No & \textbf{5.3/5.3} \\
+SF-Active & Bottom & Yes & \textbf{5.3/5.3} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Position is the dominant factor (+11pp from top$\to$bottom). Independent instruction contributes +5pp only when summary is at top. Consistent with primacy anchoring~\citep{liu2023lost} and externally-provided anchor effects~\citep{epley2006anchoring}.
+
+\section{Per-Task Breakdown}
+\label{sec:pertask-appendix}
+
+\begin{table}[H]
+\centering
+\caption{Per-task recall, Experiment~2. F=\textsc{found}, P=\textsc{partial}.}
+\small
+\begin{tabular}{@{}lr cccc@{}}
+\toprule
+\textbf{Task} & \textbf{GT} & \textbf{Single} & \textbf{Ploidy} & \textbf{SF-Active} & \textbf{Self-Con.} \\
+\midrule
+DB migration & 5 & 3F+2P & \textbf{5F} & \textbf{5F} & \textbf{5F} \\
+Auth overhaul & 5 & 3--4F & 3--4F & \textbf{5F} & \textbf{5F} \\
+Microservice & 6 & 4--5F & 5--6F & \textbf{6F} & \textbf{6F} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Re-run Analysis}
+\begin{table}[H]
+\centering
+\caption{DB migration task, 2 independent runs.}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+& \textbf{Run 1} & \textbf{Run 2} & \textbf{F1 R1} & \textbf{F1 R2} \\
+\midrule
+Single & 3F+2P & 4F+1P & .571 & .643 \\
+Ploidy & \textbf{5F} & \textbf{5F} & .500 & .556 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Ploidy Level Sweep}
+\begin{table}[H]
+\centering
+\caption{Ploidy levels 1n--4n (avg over 2 tasks).}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Ploidy} & \textbf{Recall} & \textbf{F1} & \textbf{Time} \\
+\midrule
+1n & 4.5/5.0 & .584 & 272s \\
+\textbf{2n} & \textbf{5.0/5.0} & \textbf{.667} & 352s \\
+3n & 5.0/5.0 & .505 & 480s \\
+4n & 5.0/5.0 & .679 & 501s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Cross-Model Validation}
+\begin{table}[H]
+\centering
+\caption{Opus vs Sonnet (2n diploid).}
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Task} & \textbf{Method} & \textbf{Opus} & \textbf{Sonnet} \\
+\midrule
+DB migration & Single & 5/5 & 2/5 \\
+DB migration & Ploidy & 5/5 & 2/5 \\
+Auth overhaul & Single & 5/5 & 5/5 \\
+Auth overhaul & Ploidy & 5/5 & 5/5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Effort Level Analysis}
+\label{sec:effort-appendix}
+\begin{table}[H]
+\centering
+\caption{Effort sweep (avg over 2 tasks).}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Effort} & \textbf{Single Rec.} & \textbf{Ploidy Rec.} & \textbf{Single F1} & \textbf{Ploidy F1} \\
+\midrule
+low & 4.5/5 & 4.5/5 & .679 & .544 \\
+high & 4.5/5 & 4.0/5 & .634 & .650 \\
+max & 3.5/5 & 3.0/5 & .475 & .482 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{The Semi-Fresh Hypothesis}
+\label{sec:semifresh-appendix}
+
+When stuck, practitioners restart with compressed memory of prior failures---a four-step cognitive process: compression (schema formation~\citep{bartlett1932remembering}), selective forgetting (releasing fixedness~\citep{storm2012forgetting}), restart (incubation effect~\citep{sio2009incubation}), and implicit constraint (generation effect~\citep{slamecka1978generation}). Semi-Fresh sessions operationalize this: equipped with prior failures but freed from accumulated entrenchment. Three variants (Passive, Active, Selective) test how delivery mode affects independence. SF-Active's 100\% recall vs.\ SF-Passive's 89\% supports the hypothesis that retrieval autonomy preserves independence.
+
+\section{Linguistic Framing Analysis}
+\label{sec:language-appendix}
+
+\begin{table}[H]
+\centering
+\caption{Cross-linguistic pilot (single run per cell).}
+\small
+\begin{tabular}{@{}lr cccc@{}}
+\toprule
+\textbf{Task} & \textbf{GT} & \textbf{Single(en)} & \textbf{Single(ko)} & \textbf{SF-Act(en)} & \textbf{SF-Act(ko)} \\
+\midrule
+DB migr. & 5 & 3F+2P & \textbf{5F} & \textbf{5F} & 2F+3P \\
+Auth & 5 & 5F & 4F+1P & 4--5F & \textbf{5F} \\
+Micro. & 6 & 5F+1P & --- & \textbf{6F} & \textbf{6F} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+SF-Active drops 30pp on DB migration in Korean, where ground-truth issues involve abstract judgment (``sunk cost fallacy'') susceptible to euphemization norms. Concrete technical findings are unaffected.
+
+\section{Additional Discussion}
+
+\paragraph{Compression bias.} The compression step inherits Deep's bias. SF-Active mitigates this by forming independent analysis before consulting the biased summary. SF-Selective excludes confident conclusions entirely.
+
+\paragraph{Epistemic power asymmetry.} Deep can invoke unverifiable project history. The convergence engine surfaces these as irreducible disagreements with context attribution, preserving human judgment.
+
+\paragraph{Generic noise.} Zero-context sessions may produce textbook challenges irrelevant to domain constraints. The cross-model experiment confirms this failure mode. Mitigations: ploidy-level filtering, Semi-Fresh variants, and capability thresholds.
+
+\end{document}

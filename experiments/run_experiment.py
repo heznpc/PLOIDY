@@ -190,13 +190,15 @@ def get_system_prompt_for_mode(task_context: str, mode: str = None) -> str | Non
 
 # ─── LLM Backend ────────────────────────────────────────────────────────────
 
-BACKEND = "claude"  # claude | openai
+BACKEND = "claude"  # claude | gemini | openai
 TEMPERATURE = 0.0  # fixed for reproducibility (controls Event B variance)
 MAX_TOKENS = 8192  # sufficient for debate synthesis phases
 
 # Backend-specific model defaults
 BACKEND_DEFAULTS = {
     "claude": "claude-opus-4-6",
+    "gemini": "gemini-3.1-pro",
+    "codex": "codex-default",
     "openai": "gpt-4.1",
 }
 
@@ -212,6 +214,42 @@ def _call_claude(prompt: str, model: str, effort: str, system_prompt: str = None
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def _call_codex(prompt: str, model: str, effort: str, system_prompt: str = None) -> str:
+    """Call via codex exec. Free with ChatGPT Free/Plus."""
+    import tempfile
+
+    if system_prompt:
+        prompt = f"{system_prompt}\n\n{prompt}"
+    outfile = tempfile.mktemp(suffix=".txt")
+    cmd = ["codex", "exec", "-o", outfile, "--full-auto"]
+    if model and model != "codex-default":
+        cmd.extend(["-m", model])
+    cmd.append(prompt)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        raise RuntimeError(f"codex CLI error: {result.stderr.strip()}")
+    try:
+        with open(outfile) as f:
+            return f.read().strip()
+    finally:
+        import os
+        os.unlink(outfile) if os.path.exists(outfile) else None
+
+
+def _call_gemini(prompt: str, model: str, effort: str, system_prompt: str = None) -> str:
+    """Call via gemini CLI -p. Free with Gemini CLI."""
+    if system_prompt:
+        prompt = f"{system_prompt}\n\n{prompt}"
+    cmd = ["gemini", "-p", prompt]
+    # Only pass -m if user explicitly specified a non-default model
+    if model and model not in ("gemini-default", "gemini-3.1-pro"):
+        cmd.extend(["-m", model])
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        raise RuntimeError(f"gemini CLI error: {result.stderr.strip()}")
     return result.stdout.strip()
 
 
@@ -250,6 +288,8 @@ def _call_openai_api(prompt: str, model: str, effort: str, system_prompt: str = 
 
 _BACKENDS = {
     "claude": _call_claude,
+    "gemini": _call_gemini,
+    "codex": _call_codex,
     "openai": _call_openai_api,
 }
 
@@ -1519,7 +1559,11 @@ if __name__ == "__main__":
     parser.add_argument("--tasks", type=str, help="Task indices, e.g., 0,1,2")
     parser.add_argument("--methods", type=str, help="Method keys, e.g., ploidy,single")
     parser.add_argument("--model", type=str, default=MODEL, help="Model identifier")
-    parser.add_argument("--long", action="store_true", help="Use long-context tasks")
+    parser.add_argument("--long", action="store_true", help="Use long-context tasks (3 tasks)")
+    parser.add_argument("--extended", action="store_true", help="Use extended task set (25 tasks)")
+    parser.add_argument(
+        "--all-long", action="store_true", help="Use all long-context tasks (3 + 25 = 28 tasks)"
+    )
     parser.add_argument(
         "--effort",
         type=str,
@@ -1594,6 +1638,11 @@ if __name__ == "__main__":
         help="Run ploidy levels 1n through 4n for stochastic sampling analysis",
     )
     parser.add_argument(
+        "--ploidy-levels",
+        type=str,
+        help="Specific ploidy levels for sweep, e.g., 1,3,4",
+    )
+    parser.add_argument(
         "--backend",
         type=str,
         default="claude",
@@ -1619,6 +1668,7 @@ if __name__ == "__main__":
     MODEL = (
         args.model if args.model != "claude-opus-4-6" else BACKEND_DEFAULTS.get(BACKEND, args.model)
     )
+    JUDGE_MODEL = MODEL  # Use same model for judging by default
     EFFORT = args.effort
     LANGUAGE = args.lang
     INJECTION_MODE = args.injection
@@ -1635,6 +1685,20 @@ if __name__ == "__main__":
         TASKS.clear()
         TASKS.extend(LONG_CONTEXT_TASKS)
 
+    if hasattr(args, "extended") and args.extended:
+        from tasks_extended import EXTENDED_TASKS
+
+        TASKS.clear()
+        TASKS.extend(EXTENDED_TASKS)
+
+    if hasattr(args, "all_long") and args.all_long:
+        from tasks_extended import EXTENDED_TASKS
+        from tasks_longcontext import LONG_CONTEXT_TASKS
+
+        TASKS.clear()
+        TASKS.extend(LONG_CONTEXT_TASKS)
+        TASKS.extend(EXTENDED_TASKS)
+
     task_ids = [int(x) for x in args.tasks.split(",")] if args.tasks else None
     method_ids = args.methods.split(",") if args.methods else None
 
@@ -1648,6 +1712,11 @@ if __name__ == "__main__":
         sweep_modes = args.injections.split(",") if args.injections else None
         run_injection_sweep(task_ids, method_ids, sweep_modes)
     elif args.ploidy_sweep:
-        run_ploidy_sweep(task_ids, method_ids)
+        sweep_levels = (
+            [int(x) for x in args.ploidy_levels.split(",")]
+            if args.ploidy_levels
+            else None
+        )
+        run_ploidy_sweep(task_ids, method_ids, sweep_levels)
     else:
         run_experiment(task_ids, method_ids)

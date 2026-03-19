@@ -84,7 +84,7 @@ The practical consequence is stark: given the same model and the same prompt, di
 
 This failure mode is structurally analogous to apoptosis failure in cell biology. The problem is not that the session performs poorly---it is that a session with accumulated errors \emph{does not self-terminate}. It continues generating outputs, the user continues trusting them, and biased conclusions propagate through persistent memory and downstream decisions. A low-performing session that resets is functioning correctly; a high-performing session locked into a biased trajectory is the dangerous case, because its apparent competence masks the accumulated error. Ploidy's Fresh session serves as an external checkpoint---it cannot be anchored to the Deep session's prior outputs, so it detects errors that the Deep session's own context window has rendered invisible.
 
-The only computational intervention with empirical support for this problem is physical session separation. Cross-Context Review (CCR)~\citep{song2026ccr} demonstrated that a fresh session reviewing an artifact produced by a deep session achieves F1=28.6\% on error detection versus 24.6\% for same-session review ($p=0.008$). However, CCR is unidirectional---the fresh session reviews but does not debate.
+The only computational intervention with empirical support for this problem is physical session separation. Cross-Context Review (CCR)~\citep{song2026ccr}, published concurrently with and independently of this work, demonstrated that a fresh session reviewing an artifact produced by a deep session achieves F1=28.6\% on error detection versus 24.6\% for same-session review ($p=0.008$). CCR validates the core premise that context separation improves review quality. However, CCR is unidirectional---the fresh session reviews but does not debate.
 
 We extend CCR from unidirectional review to \textbf{bidirectional structured debate} and introduce the \textbf{Context Asymmetry Spectrum}---a continuum from full context (Deep) through compressed context (Semi-Fresh) to zero context (Fresh). This spectrum recognizes that the optimal information state for a challenger may be neither complete ignorance nor full knowledge, but an intermediate point analogous to the ``experienced outsider'' who brings domain awareness without institutional entrenchment.
 
@@ -121,7 +121,7 @@ ColMAD~\citep{chen2025colmad} reframes debate from competitive zero-sum to colla
 
 SR-DCR~\citep{srdcr2025} introduced asymmetric context verification debate (ACVD): a context-defending agent debates a context-deprived critic. On GPT-3.5, this achieved 62.7\% accuracy (+3.4pp over naive debate). AceMAD~\citep{liu2026acemad} proved that asymmetric cognitive potential creates submartingale drift toward truth, formally breaking the martingale curse. We note that Ploidy's current single-round design does not satisfy the multi-round conditions required for AceMAD's submartingale proof; whether a multi-round extension would achieve this remains an open question (\S\ref{sec:conclusion}).
 
-AceMAD provides the theoretical foundation demonstrating \emph{that} asymmetry works. Ploidy serves as empirical validation and system-level implementation: answering the architectural questions of \emph{what form} of context asymmetry to inject (the Context Asymmetry Spectrum), \emph{how} to deliver it (injection mode), and \emph{how many} sessions are needed to separate structural bias from stochastic noise (ploidy level).
+AceMAD provides the theoretical foundation demonstrating \emph{that} asymmetry works. Ploidy serves as empirical validation and system-level implementation: answering the architectural questions of \emph{what form} of context asymmetry to inject (the Context Asymmetry Spectrum), \emph{how} to deliver it (injection mode), and \emph{how many} sessions are needed to separate structural bias from stochastic noise (ploidy level). We note that Ploidy was developed independently and concurrently with AceMAD, motivated by practical experience with context entrenchment in long-running coding sessions rather than formal game-theoretic analysis. The convergence of an empirical practitioner-driven approach and a theoretical proof-driven approach on the same core insight---that intentional information asymmetry breaks anchoring---strengthens the case for both.
 
 \subsection{Scaling Agents vs.\ Scaling Diversity}
 \label{sec:scaling}
@@ -264,7 +264,7 @@ None
 \end{tabular}
 \end{figure}
 
-This 2D space yields five distinct session configurations. The current implementation supports Deep (full/passive) and Fresh (none). Semi-Fresh variants and Active delivery are proposed as key extensions (\S\ref{sec:semifresh}, \S\ref{sec:conclusion}).
+This 2D space yields five distinct session configurations. The current implementation supports Deep (full/passive), Fresh (none), and three Semi-Fresh variants (Passive, Active, Selective) evaluated in \S\ref{sec:exp2}.
 
 \subsection{Architecture}
 \label{sec:architecture}
@@ -274,7 +274,7 @@ MCP client sessions connect to a single Ploidy server via Streamable HTTP:
 \begin{itemize}[leftmargin=1.5em]
   \item \textbf{Deep session}: Full project context (codebase, history, prior decisions)
   \item \textbf{Fresh session}: Only the raw artifact under review (code snippet, architecture question)
-  \item \textbf{Semi-Fresh session} (proposed): Deep's \textsc{position} output, compressed by a summarization step, as the only context
+  \item \textbf{Semi-Fresh session}: Deep's \textsc{position} output, compressed by a summarization step, as the only context
 \end{itemize}
 
 The server maintains debate state in SQLite (WAL mode) and enforces the phase protocol.
@@ -1028,9 +1028,6 @@ This paper was written with the assistance of Claude Code (Anthropic, Claude Opu
 % ============================================================
 % References
 % ============================================================
-% These references appear in the original reference list but are not cited in the body.
-% \nocite ensures they are included in the bibliography for completeness.
-\nocite{debate2026deliberation}
 \bibliography{references}
 
 \end{document}

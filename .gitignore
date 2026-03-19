@@ -54,4 +54,16 @@ docs/internal/
 
 # Experiment results (large, local only)
 experiments/results/
-paper/latex/main.pdf
+experiments/logs/
+experiments/phase*.log
+
+# LaTeX build artifacts
+paper/latex/*.aux
+paper/latex/*.bbl
+paper/latex/*.blg
+paper/latex/*.log
+paper/latex/*.out
+paper/latex/*.pdf
+paper/latex/missfont.log
+paper/latex/colm_template.tar.gz
+paper/latex/Template-2026/
