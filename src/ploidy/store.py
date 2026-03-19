@@ -14,6 +14,7 @@ Tables:
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -21,9 +22,9 @@ import aiosqlite
 
 from ploidy.exceptions import PloidyError
 
-_DEFAULT_DB_PATH = Path(
-    os.environ.get("PLOIDY_DB_PATH", str(Path.home() / ".ploidy" / "ploidy.db"))
-)
+def default_db_path() -> Path:
+    """Resolve the database path from the current environment."""
+    return Path(os.environ.get("PLOIDY_DB_PATH", str(Path.home() / ".ploidy" / "ploidy.db")))
 
 _CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS debates (
@@ -39,6 +40,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     debate_id TEXT NOT NULL REFERENCES debates(id),
     role TEXT NOT NULL,
     base_prompt TEXT NOT NULL,
+    context_documents TEXT NOT NULL DEFAULT '[]',
+    delivery_mode TEXT NOT NULL DEFAULT 'none',
+    compressed_summary TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -62,6 +67,19 @@ CREATE TABLE IF NOT EXISTS convergence (
 );
 """
 
+_SESSION_MIGRATIONS = (
+    ("context_documents", "ALTER TABLE sessions ADD COLUMN context_documents TEXT NOT NULL DEFAULT '[]'"),
+    ("delivery_mode", "ALTER TABLE sessions ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'none'"),
+    ("compressed_summary", "ALTER TABLE sessions ADD COLUMN compressed_summary TEXT"),
+    ("metadata_json", "ALTER TABLE sessions ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"),
+)
+
+_CREATE_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_debates_status ON debates(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_debate_id ON sessions(debate_id);
+CREATE INDEX IF NOT EXISTS idx_messages_debate_id ON messages(debate_id);
+"""
+
 
 def _require_db(db: aiosqlite.Connection | None) -> aiosqlite.Connection:
     """Validate that the database connection is initialized."""
@@ -82,14 +100,14 @@ class DebateStore:
             await store.save_debate("d1", "Should we use Rust?")
     """
 
-    def __init__(self, db_path: Path = _DEFAULT_DB_PATH) -> None:
+    def __init__(self, db_path: Path | None = None) -> None:
         """Initialize the store.
 
         Args:
             db_path: Path to the SQLite database file.
                      Defaults to ``~/.ploidy/ploidy.db``.
         """
-        self.db_path = db_path
+        self.db_path = db_path or default_db_path()
         self._db: aiosqlite.Connection | None = None
 
     async def __aenter__(self) -> DebateStore:
@@ -117,7 +135,18 @@ class DebateStore:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.executescript(_CREATE_TABLES)
+        await self._migrate_schema()
+        await self._db.executescript(_CREATE_INDEXES)
         await self._db.commit()
+
+    async def _migrate_schema(self) -> None:
+        """Apply additive schema migrations for older databases."""
+        db = _require_db(self._db)
+        cursor = await db.execute("PRAGMA table_info(sessions)")
+        columns = {row["name"] for row in await cursor.fetchall()}
+        for column, statement in _SESSION_MIGRATIONS:
+            if column not in columns:
+                await db.execute(statement)
 
     # ------------------------------------------------------------------
     # Debates
@@ -175,7 +204,7 @@ class DebateStore:
         return [dict(r) for r in rows]
 
     async def list_active_debates(self) -> list[dict]:
-        """List all non-complete debates for state recovery.
+        """List active debates for state recovery.
 
         Returns:
             List of active debate records.
@@ -183,7 +212,7 @@ class DebateStore:
         db = _require_db(self._db)
         cursor = await db.execute(
             "SELECT id, prompt, status, created_at, updated_at "
-            "FROM debates WHERE status != 'complete' ORDER BY created_at",
+            "FROM debates WHERE status = 'active' ORDER BY created_at",
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
@@ -207,7 +236,15 @@ class DebateStore:
     # ------------------------------------------------------------------
 
     async def save_session(
-        self, session_id: str, debate_id: str, role: str, base_prompt: str
+        self,
+        session_id: str,
+        debate_id: str,
+        role: str,
+        base_prompt: str,
+        context_documents: list[str] | None = None,
+        delivery_mode: str = "none",
+        compressed_summary: str | None = None,
+        metadata: dict | None = None,
     ) -> None:
         """Persist a new session record.
 
@@ -219,8 +256,19 @@ class DebateStore:
         """
         db = _require_db(self._db)
         await db.execute(
-            "INSERT INTO sessions (id, debate_id, role, base_prompt) VALUES (?, ?, ?, ?)",
-            (session_id, debate_id, role, base_prompt),
+            "INSERT INTO sessions "
+            "(id, debate_id, role, base_prompt, context_documents, delivery_mode, "
+            "compressed_summary, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                debate_id,
+                role,
+                base_prompt,
+                json.dumps(context_documents or []),
+                delivery_mode,
+                compressed_summary,
+                json.dumps(metadata or {}),
+            ),
         )
         await db.commit()
 
@@ -235,11 +283,41 @@ class DebateStore:
         """
         db = _require_db(self._db)
         cursor = await db.execute(
-            "SELECT id, debate_id, role, base_prompt, created_at FROM sessions WHERE debate_id = ?",
+            "SELECT id, debate_id, role, base_prompt, context_documents, delivery_mode, "
+            "compressed_summary, metadata_json, created_at FROM sessions WHERE debate_id = ?",
             (debate_id,),
         )
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        sessions = []
+        for row in await cursor.fetchall():
+            session = dict(row)
+            session["context_documents"] = json.loads(session.get("context_documents") or "[]")
+            session["metadata"] = json.loads(session.pop("metadata_json", "{}") or "{}")
+            sessions.append(session)
+        return sessions
+
+    async def update_session_context(
+        self,
+        session_id: str,
+        *,
+        context_documents: list[str] | None = None,
+        delivery_mode: str | None = None,
+        compressed_summary: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        """Update persisted session context fields."""
+        db = _require_db(self._db)
+        await db.execute(
+            "UPDATE sessions SET context_documents = ?, delivery_mode = ?, "
+            "compressed_summary = ?, metadata_json = ? WHERE id = ?",
+            (
+                json.dumps(context_documents or []),
+                delivery_mode or "none",
+                compressed_summary,
+                json.dumps(metadata or {}),
+                session_id,
+            ),
+        )
+        await db.commit()
 
     # ------------------------------------------------------------------
     # Messages

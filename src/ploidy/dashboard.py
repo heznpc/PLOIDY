@@ -10,6 +10,7 @@ Usage:
 Requires: pip install ploidy[dashboard]
 """
 
+import html
 import json
 import logging
 import os
@@ -18,7 +19,11 @@ from pathlib import Path
 logger = logging.getLogger("ploidy.dashboard")
 
 _DASH_PORT = int(os.environ.get("PLOIDY_DASH_PORT", "8766"))
-_DB_PATH = Path(os.environ.get("PLOIDY_DB_PATH", str(Path.home() / ".ploidy" / "ploidy.db")))
+
+
+def _db_path() -> Path:
+    """Resolve the dashboard database path from the current environment."""
+    return Path(os.environ.get("PLOIDY_DB_PATH", str(Path.home() / ".ploidy" / "ploidy.db")))
 
 # ---------------------------------------------------------------------------
 # HTML Templates (inline to avoid external dependencies)
@@ -119,7 +124,7 @@ def _badge(status: str) -> str:
         "complete": "badge-complete",
         "cancelled": "badge-cancelled",
     }.get(status, "badge-active")
-    return f'<span class="badge {cls}">{status}</span>'
+    return f'<span class="badge {cls}">{html.escape(status)}</span>'
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +136,7 @@ async def _get_db():
     """Get a read-only database connection."""
     import aiosqlite
 
-    db = await aiosqlite.connect(f"file:{_DB_PATH}?mode=ro", uri=True)
+    db = await aiosqlite.connect(f"file:{_db_path()}?mode=ro", uri=True)
     db.row_factory = aiosqlite.Row
     return db
 
@@ -234,12 +239,15 @@ def _render_debate_list(debates: list[dict]) -> str:
         prompt_preview = (d["prompt"] or "")[:80]
         if len(d["prompt"] or "") > 80:
             prompt_preview += "..."
+        debate_id = html.escape(d["id"])
+        prompt_preview = html.escape(prompt_preview)
+        created_at = html.escape(d["created_at"])
         rows += (
             f"<tr>"
-            f'<td><a href="/debate/{d["id"]}">{d["id"]}</a></td>'
+            f'<td><a href="/debate/{debate_id}">{debate_id}</a></td>'
             f"<td>{prompt_preview}</td>"
             f"<td>{_badge(d['status'])}</td>"
-            f"<td>{d['created_at']}</td>"
+            f"<td>{created_at}</td>"
             f"</tr>"
         )
 
@@ -257,19 +265,24 @@ def _render_debate_detail(d: dict) -> str:
     role_map = {}
     for s in d.get("sessions", []):
         role_map[s["id"]] = s["role"]
+        safe_role = html.escape(s["role"].capitalize())
+        safe_session_id = html.escape(s["id"])
         sessions_html += (
-            f'<div class="card"><strong>{s["role"].capitalize()}</strong> &mdash; {s["id"]}</div>'
+            f'<div class="card"><strong>{safe_role}</strong> &mdash; {safe_session_id}</div>'
         )
 
     timeline_html = ""
     for m in d.get("messages", []):
         role = role_map.get(m["session_id"], "unknown")
-        action_label = f" [{m['action']}]" if m.get("action") else ""
-        content_preview = (m["content"] or "")[:500]
+        action_label = f" [{html.escape(m['action'])}]" if m.get("action") else ""
+        content_preview = html.escape((m["content"] or "")[:500])
+        safe_phase = html.escape(m["phase"])
+        safe_role = html.escape(role)
+        safe_timestamp = html.escape(m.get("timestamp", ""))
         timeline_html += (
             f'<div class="timeline-item">'
-            f'<div class="phase">{m["phase"]}{action_label}</div>'
-            f'<div class="role">{role} &mdash; {m.get("timestamp", "")}</div>'
+            f'<div class="phase">{safe_phase}{action_label}</div>'
+            f'<div class="role">{safe_role} &mdash; {safe_timestamp}</div>'
             f'<div class="content">{content_preview}</div>'
             f"</div>"
         )
@@ -290,23 +303,26 @@ def _render_debate_detail(d: dict) -> str:
             points = json.loads(conv.get("points_json", "[]"))
             for p in points:
                 cat = p.get("category", "irreducible")
+                safe_class = cat if cat in {"agreement", "productive_disagreement", "irreducible"} else "irreducible"
+                safe_cat = html.escape(cat.replace("_", " ").title())
+                safe_summary = html.escape(p.get("summary", "")[:200])
                 convergence_html += (
-                    f'<div class="convergence-point {cat}">'
-                    f"<strong>{cat.replace('_', ' ').title()}</strong>: "
-                    f"{p.get('summary', '')[:200]}"
+                    f'<div class="convergence-point {safe_class}">'
+                    f"<strong>{safe_cat}</strong>: "
+                    f"{safe_summary}"
                     f"</div>"
                 )
         except (json.JSONDecodeError, TypeError):
             pass
 
-        synthesis = conv.get("synthesis", "")
-        convergence_html += f"<h3>Synthesis</h3><pre>{synthesis[:2000]}</pre></div>"
+        synthesis = html.escape(conv.get("synthesis", "")[:2000])
+        convergence_html += f"<h3>Synthesis</h3><pre>{synthesis}</pre></div>"
 
     return _render(
-        f'<div class="card"><h2>Debate: {d["id"]}</h2>'
-        f"<p>{d.get('prompt', '')}</p>"
+        f'<div class="card"><h2>Debate: {html.escape(d["id"])}</h2>'
+        f"<p>{html.escape(d.get('prompt', ''))}</p>"
         f"<p>{_badge(d.get('status', 'active'))}</p>"
-        f"<p>Created: {d.get('created_at', '')}</p></div>"
+        f"<p>Created: {html.escape(d.get('created_at', ''))}</p></div>"
         f'<div class="card"><h2>Sessions</h2>{sessions_html}</div>'
         f'<div class="card"><h2>Timeline</h2>'
         f'<div class="timeline">{timeline_html}</div></div>'
@@ -392,7 +408,7 @@ async def app(scope, receive, send):
 
     except Exception as e:
         logger.error("Dashboard error: %s", e)
-        await _send_response(send, 500, _render(f"<p>Error: {e}</p>"))
+        await _send_response(send, 500, _render(f"<p>Error: {html.escape(str(e))}</p>"))
 
 
 async def _send_response(send, status: int, body: str):
@@ -447,7 +463,7 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
     logger.info("Starting Ploidy Dashboard on port %d", _DASH_PORT)
-    logger.info("Database: %s", _DB_PATH)
+    logger.info("Database: %s", _db_path())
     uvicorn.run(app, host="0.0.0.0", port=_DASH_PORT)
 
 

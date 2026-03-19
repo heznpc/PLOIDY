@@ -125,6 +125,33 @@ async def generate_fresh_position(
     )
 
 
+async def generate_experienced_position(
+    debate_prompt: str,
+    context_documents: list[str] | None = None,
+    effort: str = "high",
+    model: str | None = None,
+) -> str:
+    """Generate an Experienced session position via API."""
+    context_block = ""
+    if context_documents:
+        joined = "\n\n".join(context_documents)
+        context_block = f"Project context documents:\n{joined}\n\n"
+
+    system = (
+        "You are the experienced session in a structured debate. "
+        "You have access to project-specific context that the other session may not see. "
+        "Incorporate that context explicitly. List every bug, risk, or issue you can find. "
+        "Be specific and technical. For each issue, classify your confidence as HIGH, "
+        "MEDIUM, or LOW."
+    )
+    return await generate_response(
+        prompt=f"{context_block}Debate prompt:\n{debate_prompt}",
+        system_prompt=system,
+        effort=effort,
+        model=model,
+    )
+
+
 async def generate_semi_fresh_position(
     debate_prompt: str,
     compressed_summary: str,

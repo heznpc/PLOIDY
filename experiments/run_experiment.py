@@ -6,13 +6,14 @@ Evaluates context-asymmetric debate across the Context Asymmetry Spectrum.
 Uses `claude --print` CLI (no API key needed, uses Max/Pro subscription).
 Each call = fresh session = perfect context isolation.
 
-Methods (11):
+Methods (12):
   single          - Single session, full context
   second_opinion  - Two independent sessions, concatenated
   ccr             - CCR: deep produces, fresh reviews
   symmetric       - Symmetric debate (both full context)
   ploidy          - Asymmetric debate (deep vs fresh)
   self_consistency - 5 independent runs + majority vote (same token budget as ploidy)
+  stochastic_n    - N independent sessions, same context (Event B baseline, scales with --ploidy)
   sf_passive      - Semi-Fresh (Passive): compressed summary in prompt
   sf_active       - Semi-Fresh (Active): summary available, must retrieve after independent analysis
   sf_selective    - Semi-Fresh (Selective): only failure/uncertainty info provided
@@ -971,6 +972,51 @@ def method_semi_fresh_selective(task: Task) -> str:
     )
 
 
+def method_stochastic_n(task: Task) -> str:
+    """Baseline 6: N independent sessions, same context, no asymmetry.
+
+    Pure Event B measurement — isolates stochastic variance from context effects.
+    All sessions receive full context (same as Deep). Uses DEEP_N for session count
+    so it scales with --ploidy flag for direct comparison.
+
+    Comparison:
+      stochastic_n(N)  = N×Deep, 0×Fresh → Event B only
+      ploidy(N)        = N×Deep, N×Fresh → Event A × Event B
+      Difference       = Event A contribution
+    """
+    sys_prompt = get_system_prompt_for_mode(task.context)
+    n = max(DEEP_N + FRESH_N, 2)  # match total session count of ploidy for fair comparison
+
+    positions = []
+    for i in range(n):
+        pos = call_llm(
+            f"{build_deep_prompt(task.context, task.prompt)}\n\n"
+            f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+            f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+            system_prompt=sys_prompt,
+        )
+        positions.append(pos)
+
+    # Synthesis — same structure as ploidy convergence but no asymmetry
+    all_positions = "\n\n".join(
+        f"--- Session {i + 1}/{n} (full context) ---\n{p}" for i, p in enumerate(positions)
+    )
+
+    synthesis = call_llm(
+        f"{n} independent reviewers with identical context analyzed the same code/system.\n\n"
+        f"{all_positions}\n\n"
+        f"Synthesize a final list of ALL confirmed issues. For each:\n"
+        f"1. The issue\n"
+        f"2. How many sessions found it (e.g., 3/{n})\n"
+        f"3. Whether it was unanimous, majority, or minority\n"
+        f"4. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
+    )
+
+    parts = [f"=== Session {i + 1}/{n} ===\n{p}" for i, p in enumerate(positions)]
+    parts.append(f"=== Synthesis (Stochastic {n}n, no asymmetry) ===\n{synthesis}")
+    return "\n\n".join(parts)
+
+
 def method_ploidy(task: Task) -> str:
     """Treatment: Ploidy — asymmetric context structured debate.
 
@@ -1102,6 +1148,7 @@ METHODS = {
     "symmetric": ("Symmetric Debate", method_symmetric_debate),
     "ploidy": ("Ploidy (Asymmetric)", method_ploidy),
     "self_consistency": ("Self-Consistency (5-vote)", method_self_consistency),
+    "stochastic_n": ("Stochastic N (no asymmetry)", method_stochastic_n),
     "sf_passive": ("Semi-Fresh (Passive)", method_semi_fresh_passive),
     "sf_active": ("Semi-Fresh (Active)", method_semi_fresh_active),
     "sf_selective": ("Semi-Fresh (Selective)", method_semi_fresh_selective),
