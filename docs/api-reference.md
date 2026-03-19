@@ -1,23 +1,27 @@
 # API Reference
 
-Ploidy exposes six MCP tools for debate orchestration. All tools are available over the Streamable HTTP transport at `http://localhost:8765/mcp`.
+Ploidy exposes MCP tools for debate orchestration over the Streamable HTTP transport at `http://localhost:8765/mcp`.
 
 ## Tools Overview
 
 | Tool | Purpose | Read-only | Destructive | Idempotent |
 |------|---------|:---------:|:-----------:|:----------:|
 | `debate_start` | Create a new debate | No | Yes | No |
+| `debate_join` | Join an existing debate | No | No | No |
 | `debate_position` | Submit a position statement | No | No | No |
 | `debate_challenge` | Submit a challenge to another position | No | No | No |
 | `debate_converge` | Trigger convergence analysis | No | No | No |
 | `debate_status` | Get current debate state | Yes | No | Yes |
+| `debate_cancel` | Cancel an in-progress debate | No | Yes | Yes |
+| `debate_delete` | Delete a debate permanently | No | Yes | Yes |
 | `debate_history` | List past debates | Yes | No | Yes |
+| `debate_auto` | Run a full debate automatically | No | Yes | No |
 
 ---
 
 ## debate_start
 
-Begin a new debate session with a decision prompt. Creates a debate record and its session group (Deep + Fresh).
+Begin a new debate session with a decision prompt. Creates a debate record and the initial Experienced session.
 
 ### Parameters
 
@@ -30,9 +34,9 @@ Begin a new debate session with a decision prompt. Creates a debate record and i
 
 ```json
 {
-  "debate_id": "debate-a1b2c3d4",
-  "experienced_session_id": "debate-a1b2c3d4-exp8f2a",
-  "fresh_session_id": "debate-a1b2c3d4-fre3b7c",
+  "debate_id": "a1b2c3d4e5f6",
+  "session_id": "a1b2c3d4e5f6-exp8f2a",
+  "role": "experienced",
   "phase": "independent",
   "prompt": "Should we use monorepo or polyrepo?"
 }
@@ -53,6 +57,33 @@ Tool call: debate_start(
   prompt="Should we migrate our REST API to GraphQL?",
   context_documents=["We have 47 REST endpoints serving 3 mobile clients and 1 web app."]
 )
+```
+
+---
+
+## debate_join
+
+Join an existing debate as a `fresh` or `semi_fresh` session.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| `debate_id` | `string` | Yes | Debate identifier returned by `debate_start`. |
+| `role` | `string` | No | `fresh` or `semi_fresh`. Default: `fresh`. |
+| `delivery_mode` | `string` | No | `none`, `passive`, or `active`. Default: `none`. |
+
+### Returns
+
+```json
+{
+  "debate_id": "a1b2c3d4e5f6",
+  "session_id": "a1b2c3d4e5f6-fresh-123abc",
+  "role": "fresh",
+  "delivery_mode": "none",
+  "phase": "independent",
+  "prompt": "Should we use monorepo or polyrepo?"
+}
 ```
 
 ---
@@ -227,15 +258,17 @@ Get current state of a debate. Returns phase, session info, and message counts.
   "sessions": [
     {
       "session_id": "debate-a1b2c3d4-exp8f2a",
-      "role": "experienced",
-      "messages_submitted": 2
+      "role": "experienced"
     },
     {
       "session_id": "debate-a1b2c3d4-fre3b7c",
-      "role": "fresh",
-      "messages_submitted": 2
+      "role": "fresh"
     }
-  ]
+  ],
+  "messages": {
+    "position": [],
+    "challenge": []
+  }
 }
 ```
 
@@ -258,6 +291,72 @@ Retrieve past debates and their outcomes. Lists recent debates with their status
 | `limit` | `integer` | No | Maximum number of debates to return. Default: `50`. |
 
 ### Returns
+
+```json
+{
+  "debates": [
+    {
+      "id": "a1b2c3d4e5f6",
+      "prompt": "Should we use monorepo or polyrepo?",
+      "status": "complete",
+      "created_at": "2026-03-19 08:00:00",
+      "updated_at": "2026-03-19 08:01:10"
+    }
+  ],
+  "total": 1,
+  "limit": 50
+}
+```
+
+---
+
+## debate_auto
+
+Run a complete debate automatically using an OpenAI-compatible API backend.
+
+The server generates:
+
+- an Experienced position using `context_documents`
+- a Fresh or Semi-Fresh position
+- challenge messages from both sides
+- convergence analysis
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| `prompt` | `string` | Yes | The decision prompt. |
+| `context_documents` | `list[string]` | No | Context for the Experienced side. |
+| `fresh_role` | `string` | No | `fresh` or `semi_fresh`. Default: `fresh`. |
+| `delivery_mode` | `string` | No | `none`, `passive`, or `active`. Default: `none`. |
+
+### Constraints
+
+- `fresh_role="fresh"` requires `delivery_mode="none"`
+- `fresh_role="semi_fresh"` requires `delivery_mode="passive"` or `delivery_mode="active"`
+- requires `PLOIDY_API_BASE_URL` and compatible credentials
+
+### Returns
+
+```json
+{
+  "debate_id": "a1b2c3d4e5f6",
+  "phase": "complete",
+  "mode": "auto",
+  "fresh_role": "fresh",
+  "delivery_mode": "none",
+  "synthesis": "Use a monorepo for the shared auth layer but isolate deployment boundaries.",
+  "confidence": 0.5,
+  "meta_analysis": null,
+  "points": [
+    {
+      "category": "productive_disagreement",
+      "summary": "Deployment coupling risk",
+      "resolution": null
+    }
+  ]
+}
+```
 
 ```json
 {

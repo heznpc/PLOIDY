@@ -121,11 +121,18 @@ async def _recover_state(store: DebateStore) -> None:
                 "fresh": SessionRole.FRESH,
             }
             role = role_map.get(s["role"], SessionRole.FRESH)
+            try:
+                delivery_mode = DeliveryMode(s.get("delivery_mode", "none"))
+            except ValueError:
+                delivery_mode = DeliveryMode.NONE
             ctx = SessionContext(
                 session_id=s["id"],
                 role=role,
                 base_prompt=s["base_prompt"],
-                context_documents=[],
+                context_documents=s.get("context_documents", []),
+                delivery_mode=delivery_mode,
+                compressed_summary=s.get("compressed_summary"),
+                metadata=s.get("metadata", {}),
             )
             _sessions[s["id"]] = ctx
             _session_to_debate[s["id"]] = debate_id
@@ -248,7 +255,16 @@ async def debate_start(prompt: str, context_documents: list[str] | None = None) 
         base_prompt=prompt,
         context_documents=docs,
     )
-    await store.save_session(exp_id, debate_id, "experienced", prompt)
+    await store.save_session(
+        exp_id,
+        debate_id,
+        "experienced",
+        prompt,
+        context_documents=docs,
+        delivery_mode=exp.delivery_mode.value,
+        compressed_summary=exp.compressed_summary,
+        metadata=exp.metadata,
+    )
 
     _sessions[exp_id] = exp
     _debate_sessions[debate_id] = [exp_id]
@@ -331,7 +347,16 @@ async def debate_join(
         context_documents=[],
         delivery_mode=dm,
     )
-    await store.save_session(sid, debate_id, role, protocol.prompt)
+    await store.save_session(
+        sid,
+        debate_id,
+        role,
+        protocol.prompt,
+        context_documents=ctx.context_documents,
+        delivery_mode=ctx.delivery_mode.value,
+        compressed_summary=ctx.compressed_summary,
+        metadata=ctx.metadata,
+    )
 
     _sessions[sid] = ctx
     _debate_sessions[debate_id].append(sid)
@@ -758,6 +783,7 @@ async def debate_auto(
     try:
         from ploidy.api_client import (
             compress_position,
+            generate_experienced_position,
             generate_challenge,
             generate_fresh_position,
             generate_semi_fresh_position,
@@ -773,6 +799,26 @@ async def debate_auto(
 
     _validate_length(prompt, _MAX_PROMPT_LEN, "prompt")
     docs = context_documents or []
+    if len(docs) > _MAX_CONTEXT_DOCS:
+        raise ProtocolError(f"Too many context documents ({len(docs)} > {_MAX_CONTEXT_DOCS})")
+    for i, doc in enumerate(docs):
+        _validate_length(doc, _MAX_CONTENT_LEN, f"context_documents[{i}]")
+
+    role_map = {"fresh": SessionRole.FRESH, "semi_fresh": SessionRole.SEMI_FRESH}
+    auto_role = role_map.get(fresh_role)
+    if auto_role is None:
+        raise ProtocolError(f"Invalid fresh_role '{fresh_role}'. Must be 'fresh' or 'semi_fresh'")
+
+    dm_map = {"none": DeliveryMode.NONE, "passive": DeliveryMode.PASSIVE, "active": DeliveryMode.ACTIVE}
+    dm = dm_map.get(delivery_mode)
+    if dm is None:
+        raise ProtocolError(
+            f"Invalid delivery_mode '{delivery_mode}'. Must be 'none', 'passive', or 'active'"
+        )
+    if auto_role == SessionRole.FRESH and dm != DeliveryMode.NONE:
+        raise ProtocolError("Fresh auto sessions must use delivery_mode='none'")
+    if auto_role == SessionRole.SEMI_FRESH and dm == DeliveryMode.NONE:
+        raise ProtocolError("Semi-fresh auto sessions must use 'passive' or 'active'")
 
     # 1. Create debate + experienced session
     debate_id = uuid.uuid4().hex[:12]
@@ -786,7 +832,16 @@ async def debate_auto(
         context_documents=docs,
         delivery_mode=DeliveryMode.PASSIVE,
     )
-    await store.save_session(exp_id, debate_id, "experienced", prompt)
+    await store.save_session(
+        exp_id,
+        debate_id,
+        "experienced",
+        prompt,
+        context_documents=docs,
+        delivery_mode=exp.delivery_mode.value,
+        compressed_summary=exp.compressed_summary,
+        metadata=exp.metadata,
+    )
 
     _sessions[exp_id] = exp
     _debate_sessions[debate_id] = [exp_id]
@@ -797,11 +852,6 @@ async def debate_auto(
     _debate_locks[debate_id] = asyncio.Lock()
 
     # 2. Create auto-session
-    role_map = {"fresh": SessionRole.FRESH, "semi_fresh": SessionRole.SEMI_FRESH}
-    auto_role = role_map.get(fresh_role, SessionRole.FRESH)
-    dm_map = {"passive": DeliveryMode.PASSIVE, "active": DeliveryMode.ACTIVE}
-    dm = dm_map.get(delivery_mode, DeliveryMode.NONE)
-
     prefix = "sf" if auto_role == SessionRole.SEMI_FRESH else "fresh"
     auto_id = f"{debate_id}-{prefix}-{uuid.uuid4().hex[:6]}"
     auto_ctx = SessionContext(
@@ -811,7 +861,16 @@ async def debate_auto(
         context_documents=[],
         delivery_mode=dm,
     )
-    await store.save_session(auto_id, debate_id, fresh_role, prompt)
+    await store.save_session(
+        auto_id,
+        debate_id,
+        fresh_role,
+        prompt,
+        context_documents=auto_ctx.context_documents,
+        delivery_mode=auto_ctx.delivery_mode.value,
+        compressed_summary=auto_ctx.compressed_summary,
+        metadata=auto_ctx.metadata,
+    )
 
     _sessions[auto_id] = auto_ctx
     _debate_sessions[debate_id].append(auto_id)
@@ -824,91 +883,94 @@ async def debate_auto(
         fresh_role,
         auto_id,
     )
+    try:
+        # 3. Generate positions
+        protocol.advance_phase()  # → POSITION
 
-    # 3. Generate positions
-    protocol.advance_phase()  # → POSITION
+        exp_pos = await generate_experienced_position(prompt, docs)
 
-    # Experienced position (from the calling session's context)
-    full_prompt = prompt
-    if docs:
-        full_prompt = f"Context:\n{''.join(docs)}\n\n{prompt}"
-    deep_pos_content = (
-        f"Please analyze and provide your position on: {full_prompt}\n\n"
-        f"List every bug, risk, or issue you can find. Be specific and technical."
-    )
+        if auto_role == SessionRole.SEMI_FRESH:
+            compressed = await compress_position(exp_pos)
+            auto_ctx.compressed_summary = compressed
+            await store.update_session_context(
+                auto_id,
+                context_documents=auto_ctx.context_documents,
+                delivery_mode=auto_ctx.delivery_mode.value,
+                compressed_summary=auto_ctx.compressed_summary,
+                metadata=auto_ctx.metadata,
+            )
+            auto_pos = await generate_semi_fresh_position(
+                prompt, compressed, delivery_mode=delivery_mode
+            )
+        else:
+            auto_pos = await generate_fresh_position(prompt)
 
-    # Auto-generate fresh/semi-fresh position via API
-    compressed = None
-    if auto_role == SessionRole.SEMI_FRESH:
-        # First generate deep position via API for compression
-        deep_pos = await generate_fresh_position(full_prompt)
-        compressed = await compress_position(deep_pos)
-        auto_pos = await generate_semi_fresh_position(
-            prompt, compressed, delivery_mode=delivery_mode
+        for sid, content in [(exp_id, exp_pos), (auto_id, auto_pos)]:
+            msg = DebateMessage(
+                session_id=sid,
+                phase=DebatePhase.POSITION,
+                content=content,
+                timestamp=_now(),
+            )
+            protocol.submit_message(msg)
+            await store.save_message(debate_id, sid, "position", content)
+
+        protocol.advance_phase()  # → CHALLENGE
+
+        exp_challenge = await generate_challenge(
+            own_position=exp_pos,
+            other_position=auto_pos,
+            own_role="experienced",
+            other_role=fresh_role,
         )
-        auto_ctx.compressed_summary = compressed
-    else:
-        auto_pos = await generate_fresh_position(prompt)
-
-    # Record positions
-    for sid, content in [(exp_id, deep_pos_content), (auto_id, auto_pos)]:
-        msg = DebateMessage(
-            session_id=sid,
-            phase=DebatePhase.POSITION,
-            content=content,
-            timestamp=_now(),
+        auto_challenge = await generate_challenge(
+            own_position=auto_pos,
+            other_position=exp_pos,
+            own_role=fresh_role,
+            other_role="experienced",
         )
-        protocol.submit_message(msg)
-        await store.save_message(debate_id, sid, "position", content)
 
-    protocol.advance_phase()  # → CHALLENGE
+        for sid, content in [(exp_id, exp_challenge), (auto_id, auto_challenge)]:
+            ch_msg = DebateMessage(
+                session_id=sid,
+                phase=DebatePhase.CHALLENGE,
+                content=content,
+                timestamp=_now(),
+                action=SemanticAction.CHALLENGE,
+            )
+            protocol.submit_message(ch_msg)
+            await store.save_message(debate_id, sid, "challenge", content, "challenge")
 
-    # 4. Generate challenges via API
-    auto_challenge = await generate_challenge(
-        own_position=auto_pos,
-        other_position=deep_pos_content,
-        own_role=fresh_role,
-        other_role="experienced",
-    )
+        protocol.advance_phase()  # → CONVERGENCE
 
-    ch_msg = DebateMessage(
-        session_id=auto_id,
-        phase=DebatePhase.CHALLENGE,
-        content=auto_challenge,
-        timestamp=_now(),
-        action=SemanticAction.CHALLENGE,
-    )
-    protocol.submit_message(ch_msg)
-    await store.save_message(debate_id, auto_id, "challenge", auto_challenge, "challenge")
+        engine = ConvergenceEngine(use_llm=_USE_LLM_CONVERGENCE)
+        session_roles = {
+            exp_id: "Experienced",
+            auto_id: fresh_role.replace("_", "-").title(),
+        }
+        result = await engine.analyze(protocol, session_roles)
 
-    # 5. Convergence
-    protocol.advance_phase()  # → CONVERGENCE
+        protocol.advance_phase()  # → COMPLETE
 
-    engine = ConvergenceEngine(use_llm=_USE_LLM_CONVERGENCE)
-    session_roles = {
-        exp_id: "Experienced",
-        auto_id: fresh_role.replace("_", "-").title(),
-    }
-    result = await engine.analyze(protocol, session_roles)
-
-    protocol.advance_phase()  # → COMPLETE
-
-    points_json = json.dumps(
-        [
-            {
-                "category": p.category,
-                "summary": p.summary,
-                "session_a_view": p.session_a_view,
-                "session_b_view": p.session_b_view,
-                "resolution": p.resolution,
-            }
-            for p in result.points
-        ]
-    )
-    await store.save_convergence_and_complete(
-        debate_id, result.synthesis, result.confidence, points_json
-    )
-    _cleanup_debate(debate_id)
+        points_json = json.dumps(
+            [
+                {
+                    "category": p.category,
+                    "summary": p.summary,
+                    "session_a_view": p.session_a_view,
+                    "session_b_view": p.session_b_view,
+                    "resolution": p.resolution,
+                }
+                for p in result.points
+            ]
+        )
+        await store.save_convergence_and_complete(
+            debate_id, result.synthesis, result.confidence, points_json
+        )
+        _cleanup_debate(debate_id)
+    except Exception:
+        await _delete_failed_debate(store, debate_id)
+        raise
 
     logger.info(
         "Auto-debate %s complete (confidence=%.2f)",
@@ -951,6 +1013,15 @@ def _cleanup_debate(debate_id: str) -> None:
         _session_to_debate.pop(sid, None)
 
 
+async def _delete_failed_debate(store: DebateStore, debate_id: str) -> None:
+    """Best-effort cleanup for debates that fail mid-creation."""
+    _cleanup_debate(debate_id)
+    try:
+        await store.delete_debate(debate_id)
+    except Exception:
+        logger.exception("Failed to clean up partially created debate %s", debate_id)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -962,7 +1033,12 @@ async def shutdown() -> None:
     if _store is not None:
         await _store.close()
         _store = None
-        logger.info("Database connection closed")
+    _protocols.clear()
+    _sessions.clear()
+    _debate_sessions.clear()
+    _session_to_debate.clear()
+    _debate_locks.clear()
+    logger.info("Database connection closed and runtime state cleared")
 
 
 def main() -> None:

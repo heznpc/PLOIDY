@@ -71,20 +71,35 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("Ploidy", transport="streamable-http", port=8765)
 ```
 
-## v0.2: API Fallback
+## v0.2: API Auto Mode (current implementation)
 
-Add an API fallback mode for automated / single-terminal use. The server generates Fresh session responses via direct API calls, giving it full control over what context Session B sees.
+Single-call automated debates via the `debate_auto` tool. The server creates both sessions, generates all responses via an OpenAI-compatible API, and returns the convergence result.
 
-### How It Works
+### How `debate_auto` Works
 
-1. User (via the Deep session) calls `debate/start` with a prompt and their position
-2. The server makes a direct API call for the Fresh session -- constructing a message array with *only* the debate prompt
-3. The server orchestrates the full debate internally, alternating between the user's input and API-generated responses
-4. The user receives the complete debate transcript and convergence result
+```
+debate_auto(prompt, context_documents?, fresh_role?, delivery_mode?)
+```
+
+1. **Create sessions.** Server creates an experienced session (with context documents) and a fresh or semi-fresh session.
+2. **Generate positions.** Experienced position is generated via API with context documents appended to the prompt.
+   - For semi-fresh: experienced position is compressed, then delivered to the semi-fresh session according to `delivery_mode`.
+   - For fresh: only the debate prompt is sent.
+3. **Generate challenges.** Both sessions critique each other's position via API calls.
+4. **Converge.** The convergence engine analyzes the transcript (rule-based, with optional LLM meta-analysis).
+5. **Persist and clean up.** Result saved to SQLite, debate marked complete, in-memory state cleared. On failure at any step, the debate is deleted from the database.
+
+### Session Roles in Auto Mode
+
+| Parameter | Role Created | Context Received | Delivery Mode |
+|-----------|-------------|------------------|---------------|
+| `fresh_role="fresh"` | Fresh | Debate prompt only | Must be `none` |
+| `fresh_role="semi_fresh", delivery_mode="passive"` | Semi-Fresh | Prompt + compressed summary appended at end | `passive` |
+| `fresh_role="semi_fresh", delivery_mode="active"` | Semi-Fresh | Prompt + instruction to request summary | `active` |
 
 ### Supported Backends
 
-Uses the `openai` SDK with a configurable `base_url`:
+Uses the `openai` SDK with a configurable `base_url` (`PLOIDY_API_BASE_URL`):
 
 | Backend | Base URL | Cost |
 |---------|----------|------|
@@ -96,14 +111,15 @@ Uses the `openai` SDK with a configurable `base_url`:
 
 ### Context Isolation
 
-The server constructs Session B's message array from scratch. No client intermediary can inject additional context. The server controls exactly what the model sees -- system prompt, message history, everything. The exact payload can be logged for auditability.
+The server constructs each session's API message array from scratch. No client intermediary can inject additional context. The server controls exactly what the model sees -- system prompt, message history, everything. The exact payload can be logged for auditability.
 
 ### Tradeoffs
 
 - Requires an API key (or local Ollama)
 - Per-debate API costs (typically small: ~$0.01--0.10)
-- Not truly "cross-session" in the MCP sense -- Session B is a raw API call, not a separate MCP session
+- Not truly "cross-session" in the MCP sense -- the auto session is a raw API call, not a separate MCP session
 - Context isolation is strong but server-controlled, not process-level
+- No retry logic on API failures -- a transient failure aborts the entire debate
 
 ## v0.3: MCP Sampling
 
@@ -127,7 +143,7 @@ When major MCP clients implement sampling with:
 - Verifiable context isolation
 - Configurable human-in-the-loop behavior
 
-The `SessionBProvider` abstraction in v0.2 is designed to accommodate a `SamplingProvider` implementation when this becomes viable.
+The `api_client.py` module in v0.2 is designed to be replaceable with a sampling-based provider when this becomes viable.
 
 ## Why Two-Terminal Before API
 

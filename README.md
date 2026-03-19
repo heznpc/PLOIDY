@@ -78,6 +78,7 @@ Sessions debate through typed semantic actions (agree, challenge, propose altern
 | `debate_cancel` | Cancel in progress |
 | `debate_delete` | Permanently delete |
 | `debate_history` | List past debates |
+| `debate_auto` | Run a full two-sided debate automatically via API |
 
 ## Configuration
 
@@ -88,7 +89,23 @@ PLOIDY_PORT=8765              # Server port
 PLOIDY_DB_PATH=~/.ploidy/ploidy.db  # Database location
 PLOIDY_LOG_LEVEL=INFO         # Logging level
 PLOIDY_AUTH_TOKEN=secret      # Bearer token auth (optional)
+PLOIDY_API_BASE_URL=https://api.openai.com/v1  # Optional auto-debate backend
+PLOIDY_API_KEY=...            # Optional API key for auto mode
+PLOIDY_API_MODEL=gpt-5.4      # Optional model override for auto mode
 ```
+
+## Single-Terminal Auto Mode
+
+If you configure an OpenAI-compatible API backend, Ploidy can run both sides of the
+debate automatically in one tool call. In `debate_auto`, the server generates:
+
+- an Experienced position using the provided `context_documents`
+- a Fresh or Semi-Fresh counter-position
+- challenge messages from both sides
+- the final convergence analysis
+
+Fresh auto sessions must use `delivery_mode="none"`. Semi-Fresh auto sessions must
+use `delivery_mode="passive"` or `delivery_mode="active"`.
 
 ## Docker
 

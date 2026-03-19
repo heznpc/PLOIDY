@@ -91,7 +91,7 @@ The Fresh session receives **only the debate prompt** — no project context.
 
 ### The Debate Unfolds
 
-Both sessions go through the protocol automatically:
+Both sessions then go through the protocol:
 
 ```
 INDEPENDENT → POSITION → CHALLENGE → CONVERGENCE → COMPLETE
@@ -127,6 +127,23 @@ The convergence result includes:
 | `debate_cancel` | Cancel an in-progress debate |
 | `debate_delete` | Permanently delete a debate |
 | `debate_history` | List past debates |
+| `debate_auto` | Run both sides automatically via API |
+
+## Optional: Single-Terminal Auto Debate
+
+If you want Ploidy to generate both sides itself, configure an OpenAI-compatible backend:
+
+```bash
+export PLOIDY_API_BASE_URL=https://api.openai.com/v1
+export PLOIDY_API_KEY=your-key
+export PLOIDY_API_MODEL=gpt-5.4
+```
+
+Then ask your MCP client to call `debate_auto`.
+
+- `fresh_role="fresh"` requires `delivery_mode="none"`
+- `fresh_role="semi_fresh"` requires `delivery_mode="passive"` or `delivery_mode="active"`
+- the server will generate both positions, both challenges, and the convergence result
 
 ## Docker
 
