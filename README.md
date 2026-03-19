@@ -80,6 +80,7 @@ Sessions debate through typed semantic actions (agree, challenge, propose altern
 | `debate_delete` | Permanently delete |
 | `debate_history` | List past debates |
 | `debate_auto` | Run a full two-sided debate automatically via API |
+| `debate_review` | Review and resume a paused auto-debate (HITL) |
 
 ## Configuration
 

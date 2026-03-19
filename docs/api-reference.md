@@ -16,6 +16,7 @@ Ploidy exposes MCP tools for debate orchestration over the Streamable HTTP trans
 | `debate_delete` | Delete a debate permanently | No | Yes | Yes |
 | `debate_history` | List past debates | Yes | No | Yes |
 | `debate_auto` | Run a full debate automatically | No | Yes | No |
+| `debate_review` | Review and resume a paused auto-debate (HITL) | No | No | No |
 
 ---
 

@@ -128,6 +128,7 @@ The convergence result includes:
 | `debate_delete` | Permanently delete a debate |
 | `debate_history` | List past debates |
 | `debate_auto` | Run both sides automatically via API |
+| `debate_review` | Review and resume a paused auto-debate (HITL) |
 
 ## Optional: Single-Terminal Auto Debate
 
