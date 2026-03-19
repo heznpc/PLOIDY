@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS debates (
 
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
-    debate_id TEXT NOT NULL REFERENCES debates(id),
+    debate_id TEXT NOT NULL REFERENCES debates(id) ON DELETE CASCADE,
     role TEXT NOT NULL,
     base_prompt TEXT NOT NULL,
     context_documents TEXT NOT NULL DEFAULT '[]',
@@ -51,8 +51,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    debate_id TEXT NOT NULL REFERENCES debates(id),
-    session_id TEXT NOT NULL REFERENCES sessions(id),
+    debate_id TEXT NOT NULL REFERENCES debates(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     phase TEXT NOT NULL,
     content TEXT NOT NULL,
     action TEXT,
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE TABLE IF NOT EXISTS convergence (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    debate_id TEXT NOT NULL UNIQUE REFERENCES debates(id),
+    debate_id TEXT NOT NULL UNIQUE REFERENCES debates(id) ON DELETE CASCADE,
     synthesis TEXT NOT NULL,
     confidence REAL NOT NULL,
     points_json TEXT NOT NULL DEFAULT '[]',
@@ -139,6 +139,8 @@ class DebateStore:
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA busy_timeout=5000")
+        await self._db.execute("PRAGMA foreign_keys=ON")
         await self._db.executescript(_CREATE_TABLES)
         await self._migrate_schema()
         await self._db.executescript(_CREATE_INDEXES)
