@@ -29,10 +29,9 @@ import argparse
 import json
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-
 
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 
@@ -96,7 +95,8 @@ def call_gemini(prompt: str, model: str = "gemini-3.1-pro", effort: str = "high"
 
 def call_codex(prompt: str, model: str = "codex-default", effort: str = "high",
                system_prompt: str = None) -> str:
-    import tempfile, os
+    import os
+    import tempfile
     full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
     outfile = tempfile.mktemp(suffix=".txt")
     cmd = ["codex", "exec", "-o", outfile, "--full-auto", full_prompt]
@@ -555,9 +555,9 @@ def run_diversity_experiment(
             print(f"{name:<45} {avg_recall*100:>7.1f}% {avg_f1:>8.3f} {avg_found:>6.1f} {avg_missed:>7.1f} {avg_tokens:>8.0f} {avg_calls:>6.1f}")
 
     print(f"\nResults saved: {results_dir}")
-    print(f"\nHypothesis check:")
-    print(f"  H1: B (same-model asymmetric) >= A (cross-model symmetric)?")
-    print(f"  H2: C (cross-model asymmetric) >= B? Marginal gain?")
+    print("\nHypothesis check:")
+    print("  H1: B (same-model asymmetric) >= A (cross-model symmetric)?")
+    print("  H2: C (cross-model asymmetric) >= B? Marginal gain?")
 
     return all_results
 
