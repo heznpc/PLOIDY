@@ -107,7 +107,7 @@ Auto mode requires `PLOIDY_API_BASE_URL` to be configured. See [session-orchestr
 
 | Module | Role |
 |--------|------|
-| `server.py` | FastMCP server entry point. Registers 10 debate tools (`debate_start`, `debate_join`, `debate_position`, `debate_challenge`, `debate_converge`, `debate_cancel`, `debate_delete`, `debate_status`, `debate_history`, `debate_auto`). Handles state recovery on startup and cleanup on completion/failure. |
+| `server.py` | FastMCP server entry point. Registers 11 debate tools (`debate_start`, `debate_join`, `debate_position`, `debate_challenge`, `debate_converge`, `debate_cancel`, `debate_delete`, `debate_status`, `debate_history`, `debate_auto`, `debate_review`). Handles state recovery on startup and cleanup on completion/failure. |
 | `protocol.py` | Debate state machine. Defines phases (`INDEPENDENT`, `POSITION`, `CHALLENGE`, `CONVERGENCE`, `COMPLETE`), valid transitions, and validation rules. |
 | `session.py` | Session context. Tracks Experienced/Semi-Fresh/Fresh role, delivery mode (none/passive/active), context documents, and compressed summaries. |
 | `convergence.py` | Convergence engine. Rule-based analysis of positions for agreement/disagreement/synthesis. Optional LLM-enhanced meta-analysis via `PLOIDY_LLM_CONVERGENCE`. |

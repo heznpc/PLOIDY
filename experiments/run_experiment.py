@@ -195,6 +195,48 @@ BACKEND = "claude"  # claude | gemini | openai
 TEMPERATURE = 0.0  # fixed for reproducibility (controls Event B variance)
 MAX_TOKENS = 8192  # sufficient for debate synthesis phases
 
+# ─── Token Tracking ─────────────────────────────────────────────────────────
+# Tracks cumulative token usage per experiment run.
+# CLI backends (claude, gemini, codex) don't report tokens, so we estimate
+# using chars/4 heuristic. API backends report exact usage.
+
+_token_tracker = {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "calls": 0,
+    "estimated": True,  # True if any call used char-based estimation
+}
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 chars per token for English, ~2 for CJK."""
+    return max(1, len(text) // 4)
+
+
+def _track_tokens(prompt_tokens: int, completion_tokens: int, exact: bool = False):
+    """Accumulate token usage for current run."""
+    _token_tracker["prompt_tokens"] += prompt_tokens
+    _token_tracker["completion_tokens"] += completion_tokens
+    _token_tracker["total_tokens"] += prompt_tokens + completion_tokens
+    _token_tracker["calls"] += 1
+    if exact:
+        _token_tracker["estimated"] = False  # at least one exact measurement
+
+
+def reset_token_tracker():
+    """Reset tracker for a new method run."""
+    _token_tracker["prompt_tokens"] = 0
+    _token_tracker["completion_tokens"] = 0
+    _token_tracker["total_tokens"] = 0
+    _token_tracker["calls"] = 0
+    _token_tracker["estimated"] = True
+
+
+def get_token_usage() -> dict:
+    """Return a copy of current token usage."""
+    return dict(_token_tracker)
+
 # Backend-specific model defaults
 BACKEND_DEFAULTS = {
     "claude": "claude-opus-4-6",
@@ -215,26 +257,30 @@ def _call_claude(prompt: str, model: str, effort: str, system_prompt: str = None
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
-    return result.stdout.strip()
+    output = result.stdout.strip()
+    full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+    _track_tokens(_estimate_tokens(full_prompt), _estimate_tokens(output))
+    return output
 
 
 def _call_codex(prompt: str, model: str, effort: str, system_prompt: str = None) -> str:
     """Call via codex exec. Free with ChatGPT Free/Plus."""
     import tempfile
 
-    if system_prompt:
-        prompt = f"{system_prompt}\n\n{prompt}"
+    full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
     outfile = tempfile.mktemp(suffix=".txt")
     cmd = ["codex", "exec", "-o", outfile, "--full-auto"]
     if model and model != "codex-default":
         cmd.extend(["-m", model])
-    cmd.append(prompt)
+    cmd.append(full_prompt)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         raise RuntimeError(f"codex CLI error: {result.stderr.strip()}")
     try:
         with open(outfile) as f:
-            return f.read().strip()
+            output = f.read().strip()
+        _track_tokens(_estimate_tokens(full_prompt), _estimate_tokens(output))
+        return output
     finally:
         import os
 
@@ -243,16 +289,17 @@ def _call_codex(prompt: str, model: str, effort: str, system_prompt: str = None)
 
 def _call_gemini(prompt: str, model: str, effort: str, system_prompt: str = None) -> str:
     """Call via gemini CLI -p. Free with Gemini CLI."""
-    if system_prompt:
-        prompt = f"{system_prompt}\n\n{prompt}"
-    cmd = ["gemini", "-p", prompt]
+    full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+    cmd = ["gemini", "-p", full_prompt]
     # Only pass -m if user explicitly specified a non-default model
     if model and model not in ("gemini-default", "gemini-3.1-pro"):
         cmd.extend(["-m", model])
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         raise RuntimeError(f"gemini CLI error: {result.stderr.strip()}")
-    return result.stdout.strip()
+    output = result.stdout.strip()
+    _track_tokens(_estimate_tokens(full_prompt), _estimate_tokens(output))
+    return output
 
 
 def _call_openai_api(prompt: str, model: str, effort: str, system_prompt: str = None) -> str:
@@ -285,6 +332,16 @@ def _call_openai_api(prompt: str, model: str, effort: str, system_prompt: str = 
         max_tokens=MAX_TOKENS,
         temperature=TEMPERATURE,
     )
+    if response.usage:
+        _track_tokens(
+            response.usage.prompt_tokens or 0,
+            response.usage.completion_tokens or 0,
+            exact=True,
+        )
+    else:
+        content = response.choices[0].message.content or ""
+        full_prompt = (system_prompt or "") + prompt
+        _track_tokens(_estimate_tokens(full_prompt), _estimate_tokens(content))
     return response.choices[0].message.content or ""
 
 
@@ -1190,6 +1247,7 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
         for method_id, (method_name, method_fn) in methods.items():
             print(f"\n  [{method_name}] running (effort={eff})...", end=" ", flush=True)
             t0 = time.time()
+            reset_token_tracker()
 
             try:
                 output = method_fn(task)
@@ -1209,14 +1267,17 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
                     bonus = judgment.get("bonus_findings", 0)
                     precision = (found + 0.5 * partial) / max(found + partial + bonus, 1)
                     f1 = 2 * precision * recall / max(precision + recall, 0.001)
+                    tokens = get_token_usage()
+                    token_str = f"~{tokens['total_tokens']}tok" if tokens['estimated'] else f"{tokens['total_tokens']}tok"
                     print(
-                        f"  → {found}/{total} found, {partial} partial, {missed} missed | F1={f1:.3f}"
+                        f"  → {found}/{total} found, {partial} partial, {missed} missed | F1={f1:.3f} | {token_str}"
                     )
                 else:
                     found = partial = missed = 0
                     f1 = 0.0
                     print("  → judge parse error")
 
+                tokens = get_token_usage()
                 result = {
                     "task_id": task.id,
                     "task_name": task.name,
@@ -1238,6 +1299,13 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
                     "bonus_findings": judgment.get("bonus_findings", 0),
                     "f1": round(f1, 4),
                     "elapsed_seconds": round(elapsed, 1),
+                    "token_usage": {
+                        "prompt_tokens": tokens["prompt_tokens"],
+                        "completion_tokens": tokens["completion_tokens"],
+                        "total_tokens": tokens["total_tokens"],
+                        "llm_calls": tokens["calls"],
+                        "estimated": tokens["estimated"],
+                    },
                     "judgment": judgment,
                 }
                 all_results.append(result)
