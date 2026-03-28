@@ -98,9 +98,7 @@ async def generate_response(
                 max_tokens=effective_max_tokens,
             )
         except (IndexError, KeyError, AttributeError) as e:
-            raise RuntimeError(
-                f"Ploidy API returned malformed response: {e}"
-            ) from e
+            raise RuntimeError(f"Ploidy API returned malformed response: {e}") from e
         except Exception as e:
             last_error = e
             # Import error types available at runtime
@@ -123,9 +121,7 @@ async def generate_response(
         try:
             content = response.choices[0].message.content or ""
         except (IndexError, KeyError, AttributeError) as e:
-            raise RuntimeError(
-                f"Ploidy API returned empty or malformed choices: {e}"
-            ) from e
+            raise RuntimeError(f"Ploidy API returned empty or malformed choices: {e}") from e
         return content
     raise RuntimeError(f"Ploidy API call failed after {_MAX_RETRIES} retries: {last_error}")
 
