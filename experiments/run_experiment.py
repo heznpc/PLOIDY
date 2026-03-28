@@ -261,6 +261,7 @@ def get_token_usage() -> dict:
     """Return a copy of current token usage."""
     return dict(_token_tracker)
 
+
 # Backend-specific model defaults
 BACKEND_DEFAULTS = {
     "claude": "claude-opus-4-6",
@@ -448,20 +449,30 @@ def call_llm(
             err_str = str(e).lower()
             is_retriable = "cli error" in err_str or any(
                 kw in err_str
-                for kw in ["rate limit", "quota", "429", "capacity", "overloaded",
-                            "too many", "limit", "usage", "exceeded", "unavailable",
-                            "503", "502", "timeout", "hit your limit"]
+                for kw in [
+                    "rate limit",
+                    "quota",
+                    "429",
+                    "capacity",
+                    "overloaded",
+                    "too many",
+                    "limit",
+                    "usage",
+                    "exceeded",
+                    "unavailable",
+                    "503",
+                    "502",
+                    "timeout",
+                    "hit your limit",
+                ]
             )
             if is_retriable and attempt < max_retries - 1:
                 wait = _calc_wait_until_reset(str(e))
                 from datetime import datetime as _dt
+
                 now = _dt.now().strftime("%H:%M")
-                print(
-                    f"\n  ⏳ Limit hit at {now}: {str(e)[:120]}"
-                )
-                print(
-                    f"    Sleeping {wait}s (~{wait // 60}min) until reset..."
-                )
+                print(f"\n  ⏳ Limit hit at {now}: {str(e)[:120]}")
+                print(f"    Sleeping {wait}s (~{wait // 60}min) until reset...")
                 time.sleep(wait)
                 continue
             raise
@@ -1323,7 +1334,9 @@ METHODS = {
 }
 
 
-def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str = None, resume_dir: Path = None):
+def run_experiment(
+    task_ids=None, method_ids=None, effort: str = None, lang: str = None, resume_dir: Path = None
+):
     """Run experiments across tasks and methods.
 
     Args:
@@ -1345,7 +1358,9 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         results_dir = (
-            Path(__file__).parent / "results" / f"{timestamp}_effort-{eff}_lang-{actual_lang}_inj-{inj}"
+            Path(__file__).parent
+            / "results"
+            / f"{timestamp}_effort-{eff}_lang-{actual_lang}_inj-{inj}"
         )
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1393,7 +1408,11 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
                     precision = (found + 0.5 * partial) / max(found + partial + bonus, 1)
                     f1 = 2 * precision * recall / max(precision + recall, 0.001)
                     tokens = get_token_usage()
-                    token_str = f"~{tokens['total_tokens']}tok" if tokens['estimated'] else f"{tokens['total_tokens']}tok"
+                    token_str = (
+                        f"~{tokens['total_tokens']}tok"
+                        if tokens["estimated"]
+                        else f"{tokens['total_tokens']}tok"
+                    )
                     print(
                         f"  → {found}/{total} found, {partial} partial, {missed} missed | F1={f1:.3f} | {token_str}"
                     )
@@ -1845,12 +1864,10 @@ def run_context_pct_sweep(task_ids=None, method_ids=None, percentages=None):
             ]
             if not method_results:
                 continue
-            avg_f1 = sum(r["judgment"].get("f1", 0) for r in method_results) / len(
+            avg_f1 = sum(r["judgment"].get("f1", 0) for r in method_results) / len(method_results)
+            avg_recall = sum(r["judgment"].get("recall", 0) for r in method_results) / len(
                 method_results
             )
-            avg_recall = sum(
-                r["judgment"].get("recall", 0) for r in method_results
-            ) / len(method_results)
             avg_time = sum(r.get("elapsed_seconds", 0) for r in method_results) / len(
                 method_results
             )
@@ -2041,9 +2058,7 @@ if __name__ == "__main__":
     method_ids = args.methods.split(",") if args.methods else None
 
     if args.context_pct_sweep:
-        sweep_pcts = (
-            [int(x) for x in args.context_pcts.split(",")] if args.context_pcts else None
-        )
+        sweep_pcts = [int(x) for x in args.context_pcts.split(",")] if args.context_pcts else None
         run_context_pct_sweep(task_ids, method_ids, sweep_pcts)
     elif args.effort_sweep:
         sweep_efforts = args.efforts.split(",") if args.efforts else None

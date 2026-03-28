@@ -36,8 +36,11 @@ from pathlib import Path
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 
 _token_tracker = {
-    "prompt_tokens": 0, "completion_tokens": 0,
-    "total_tokens": 0, "calls": 0, "estimated": True,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "calls": 0,
+    "estimated": True,
 }
 
 
@@ -55,7 +58,9 @@ def _track_tokens(prompt_tokens: int, completion_tokens: int, exact: bool = Fals
 
 
 def reset_token_tracker():
-    _token_tracker.update(prompt_tokens=0, completion_tokens=0, total_tokens=0, calls=0, estimated=True)
+    _token_tracker.update(
+        prompt_tokens=0, completion_tokens=0, total_tokens=0, calls=0, estimated=True
+    )
 
 
 def get_token_usage() -> dict:
@@ -64,8 +69,10 @@ def get_token_usage() -> dict:
 
 # ─── Backends ────────────────────────────────────────────────────────────────
 
-def call_claude(prompt: str, model: str = "claude-opus-4-6", effort: str = "high",
-                system_prompt: str = None) -> str:
+
+def call_claude(
+    prompt: str, model: str = "claude-opus-4-6", effort: str = "high", system_prompt: str = None
+) -> str:
     cmd = ["claude", "--print", "--model", model]
     if system_prompt:
         cmd.extend(["--system-prompt", system_prompt])
@@ -81,8 +88,9 @@ def call_claude(prompt: str, model: str = "claude-opus-4-6", effort: str = "high
     return output
 
 
-def call_gemini(prompt: str, model: str = "gemini-3.1-pro", effort: str = "high",
-                system_prompt: str = None) -> str:
+def call_gemini(
+    prompt: str, model: str = "gemini-3.1-pro", effort: str = "high", system_prompt: str = None
+) -> str:
     full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
     cmd = ["gemini", "-p", full_prompt]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -93,10 +101,12 @@ def call_gemini(prompt: str, model: str = "gemini-3.1-pro", effort: str = "high"
     return output
 
 
-def call_codex(prompt: str, model: str = "codex-default", effort: str = "high",
-               system_prompt: str = None) -> str:
+def call_codex(
+    prompt: str, model: str = "codex-default", effort: str = "high", system_prompt: str = None
+) -> str:
     import os
     import tempfile
+
     full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
     outfile = tempfile.mktemp(suffix=".txt")
     cmd = ["codex", "exec", "-o", outfile, "--full-auto", full_prompt]
@@ -126,6 +136,7 @@ BACKEND_MODELS = {
 
 
 # ─── Tasks (long-context only — short에서는 차이 안 남) ─────────────────────
+
 
 @dataclass
 class Task:
@@ -220,9 +231,10 @@ TASKS = [
 
 # ─── Judge ──────────────────────────────────────────────────────────────────
 
+
 def judge_result(task: Task, method_name: str, output: str) -> dict:
     """Judge output against ground truth using Claude Opus as unified judge."""
-    gt_list = "\n".join(f"  {i+1}. {g}" for i, g in enumerate(task.ground_truth))
+    gt_list = "\n".join(f"  {i + 1}. {g}" for i, g in enumerate(task.ground_truth))
     prompt = (
         f"You are a precise technical judge. Compare this review output against known ground truth.\n\n"
         f"=== GROUND TRUTH ISSUES ===\n{gt_list}\n\n"
@@ -246,6 +258,7 @@ def judge_result(task: Task, method_name: str, output: str) -> dict:
 
 
 # ─── Methods ────────────────────────────────────────────────────────────────
+
 
 def method_single(task: Task, backend: str = "claude") -> str:
     """D) Baseline: single model, full context."""
@@ -407,6 +420,7 @@ def method_cross_model_asymmetric(task: Task, primary: str, secondary: str) -> s
 
 # ─── Runner ──────────────────────────────────────────────────────────────────
 
+
 def run_diversity_experiment(
     task_ids: list[int] | None = None,
     primary: str = "claude",
@@ -415,7 +429,9 @@ def run_diversity_experiment(
 ):
     tasks = TASKS if task_ids is None else [TASKS[i] for i in task_ids]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = Path(__file__).parent / "results" / f"{timestamp}_diversity_{primary}-vs-{secondary}"
+    results_dir = (
+        Path(__file__).parent / "results" / f"{timestamp}_diversity_{primary}-vs-{secondary}"
+    )
     results_dir.mkdir(parents=True, exist_ok=True)
 
     conditions = {
@@ -487,7 +503,9 @@ def run_diversity_experiment(
                         f1 = 2 * precision * recall / max(precision + recall, 0.001)
                         tokens = get_token_usage()
                         token_str = f"~{tokens['total_tokens']}tok/{tokens['calls']}calls"
-                        print(f"  -> {found}/{total} found, {partial} partial, {missed} missed | F1={f1:.3f} | {token_str}")
+                        print(
+                            f"  -> {found}/{total} found, {partial} partial, {missed} missed | F1={f1:.3f} | {token_str}"
+                        )
                     else:
                         found = partial = missed = 0
                         f1 = recall = precision = 0.0
@@ -524,12 +542,14 @@ def run_diversity_experiment(
 
                 except Exception as e:
                     print(f"ERROR: {e}")
-                    all_results.append({
-                        "repeat": rep + 1,
-                        "task_id": task.id,
-                        "condition": cond_id,
-                        "error": str(e),
-                    })
+                    all_results.append(
+                        {
+                            "repeat": rep + 1,
+                            "task_id": task.id,
+                            "condition": cond_id,
+                            "error": str(e),
+                        }
+                    )
 
     # Save results
     with open(results_dir / "summary.json", "w") as f:
@@ -539,20 +559,30 @@ def run_diversity_experiment(
     print(f"\n\n{'=' * 80}")
     print("DIVERSITY EXPERIMENT SUMMARY")
     print(f"{'=' * 80}")
-    print(f"{'Condition':<45} {'Recall%':>8} {'F1':>8} {'Found':>6} {'Missed':>7} {'~Tokens':>8} {'Calls':>6}")
+    print(
+        f"{'Condition':<45} {'Recall%':>8} {'F1':>8} {'Found':>6} {'Missed':>7} {'~Tokens':>8} {'Calls':>6}"
+    )
     print("-" * 90)
 
     for cond_id in conditions:
-        cond_results = [r for r in all_results if r.get("condition") == cond_id and "error" not in r]
+        cond_results = [
+            r for r in all_results if r.get("condition") == cond_id and "error" not in r
+        ]
         if cond_results:
             avg_recall = sum(r["recall"] for r in cond_results) / len(cond_results)
             avg_f1 = sum(r["f1"] for r in cond_results) / len(cond_results)
             avg_found = sum(r["found"] for r in cond_results) / len(cond_results)
             avg_missed = sum(r["missed"] for r in cond_results) / len(cond_results)
-            avg_tokens = sum(r.get("token_usage", {}).get("total_tokens", 0) for r in cond_results) / len(cond_results)
-            avg_calls = sum(r.get("token_usage", {}).get("llm_calls", 0) for r in cond_results) / len(cond_results)
+            avg_tokens = sum(
+                r.get("token_usage", {}).get("total_tokens", 0) for r in cond_results
+            ) / len(cond_results)
+            avg_calls = sum(
+                r.get("token_usage", {}).get("llm_calls", 0) for r in cond_results
+            ) / len(cond_results)
             name = conditions[cond_id][0][:44]
-            print(f"{name:<45} {avg_recall*100:>7.1f}% {avg_f1:>8.3f} {avg_found:>6.1f} {avg_missed:>7.1f} {avg_tokens:>8.0f} {avg_calls:>6.1f}")
+            print(
+                f"{name:<45} {avg_recall * 100:>7.1f}% {avg_f1:>8.3f} {avg_found:>6.1f} {avg_missed:>7.1f} {avg_tokens:>8.0f} {avg_calls:>6.1f}"
+            )
 
     print(f"\nResults saved: {results_dir}")
     print("\nHypothesis check:")
@@ -565,10 +595,20 @@ def run_diversity_experiment(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Experiment 5: Species vs Cultural Diversity")
     parser.add_argument("--tasks", type=str, help="Task indices, e.g., 0,1,2")
-    parser.add_argument("--primary", type=str, default="claude",
-                        choices=list(BACKENDS.keys()), help="Primary model backend")
-    parser.add_argument("--secondary", type=str, default="gemini",
-                        choices=list(BACKENDS.keys()), help="Secondary model backend")
+    parser.add_argument(
+        "--primary",
+        type=str,
+        default="claude",
+        choices=list(BACKENDS.keys()),
+        help="Primary model backend",
+    )
+    parser.add_argument(
+        "--secondary",
+        type=str,
+        default="gemini",
+        choices=list(BACKENDS.keys()),
+        help="Secondary model backend",
+    )
     parser.add_argument("--repeats", type=int, default=1, help="Number of repetitions")
 
     args = parser.parse_args()
