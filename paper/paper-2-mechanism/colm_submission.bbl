@@ -1,0 +1,139 @@
+\begin{thebibliography}{22}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[{Anonymous}(2026)]{scaling2026paradox}
+{Anonymous}.
+\newblock When less is more: The {LLM} scaling paradox in context compression.
+\newblock \emph{arXiv preprint arXiv:2602.09789}, 2026.
+
+\bibitem[Azoulay et~al.(2019)Azoulay, Fons-Rosen, and Graff~Zivin]{azoulay2019}
+Pierre Azoulay, Christian Fons-Rosen, and Joshua~S. Graff~Zivin.
+\newblock Does science advance one funeral at a time?
+\newblock \emph{American Economic Review}, 109\penalty0 (8):\penalty0
+  2889--2920, 2019.
+
+\bibitem[Bartlett(1932)]{bartlett1932remembering}
+Frederic~C. Bartlett.
+\newblock \emph{Remembering: A Study in Experimental and Social Psychology}.
+\newblock Cambridge University Press, 1932.
+
+\bibitem[Boca et~al.(2025)]{boca2025emergent}
+Ioannis Boca et~al.
+\newblock Emergent social conventions and collective bias in {LLM} populations.
+\newblock \emph{Science Advances}, 2025.
+
+\bibitem[Chen et~al.(2025)Chen, Niu, Cheng, Han, and Sugiyama]{chen2025colmad}
+Yongqiang Chen, Gang Niu, James Cheng, Bo~Han, and Masashi Sugiyama.
+\newblock Towards scalable oversight with collaborative multi-agent debate in
+  error detection.
+\newblock \emph{arXiv preprint arXiv:2510.20963}, 2025.
+
+\bibitem[Choi et~al.(2025)Choi, Zhu, and Li]{choi2025debate}
+Yun-Da Choi, Haoran Zhu, and Jinhao Li.
+\newblock Debate or vote: Which yields better decisions in multi-agent {LLMs}?
+\newblock In \emph{NeurIPS 2025 Spotlight}, 2025.
+\newblock arXiv:2508.17536.
+
+\bibitem[{Chroma Research}(2025)]{chroma2025contextrot}
+{Chroma Research}.
+\newblock Context rot.
+\newblock \url{https://research.trychroma.com/context-rot}, 2025.
+
+\bibitem[Du et~al.(2025)]{du2025context}
+Jiaqi Du et~al.
+\newblock Context length alone hurts {LLM} performance despite perfect
+  retrieval.
+\newblock In \emph{Proceedings of EMNLP}, 2025.
+\newblock arXiv:2510.05381.
+
+\bibitem[Epley \& Gilovich(2006)Epley and Gilovich]{epley2006anchoring}
+Nicholas Epley and Thomas Gilovich.
+\newblock The anchoring-and-adjustment heuristic: Why the adjustments are
+  insufficient.
+\newblock \emph{Psychological Science}, 2006.
+
+\bibitem[Feng et~al.(2026)]{feng2026anchoring}
+Yuxin Feng et~al.
+\newblock Anchoring bias in large language models: An experimental study.
+\newblock \emph{Journal of Computational Social Science}, 2026.
+
+\bibitem[Jacob et~al.(2025)Jacob, Kerrigan, and Bastos]{jacob2025chatchamber}
+Nicolas Jacob, Declan Kerrigan, and Gustavo Bastos.
+\newblock The chat-chamber effect: Trusting the {AI} hallucination.
+\newblock \emph{Big Data \& Society}, 2025.
+
+\bibitem[Jain et~al.(2025)Jain, Park, Viana, Wilson, and
+  Calacci]{jain2025sycophancy}
+Manish Jain, Sharon Park, Andre Viana, Christo Wilson, and Dan Calacci.
+\newblock Interaction context often increases sycophancy in {LLMs}.
+\newblock \emph{arXiv preprint arXiv:2509.12517}, 2025.
+
+\bibitem[Kim et~al.(2025)]{srdcr2025}
+Jinheon Kim et~al.
+\newblock When to trust context: Self-reflective debates for contextual
+  reliability ({SR-DCR}).
+\newblock \emph{arXiv preprint arXiv:2506.06020}, 2025.
+\newblock Stanford/Brown/UNSW.
+
+\bibitem[Laban et~al.(2025)Laban, Hayashi, Zhou, and Neville]{laban2025lost}
+Philippe Laban, Hideaki Hayashi, Yichen Zhou, and Jennifer Neville.
+\newblock {LLMs} get lost in multi-turn conversation.
+\newblock \emph{arXiv preprint arXiv:2505.06120}, 2025.
+
+\bibitem[Liu et~al.(2024)Liu, Lin, Hewitt, Paranjape, Bevilacqua, Petroni, and
+  Liang]{liu2023lost}
+Nelson~F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua,
+  Fabio Petroni, and Percy Liang.
+\newblock Lost in the middle: How language models use long contexts.
+\newblock \emph{Transactions of the Association for Computational Linguistics},
+  2024.
+\newblock arXiv:2307.03172.
+
+\bibitem[Liu et~al.(2026)]{liu2026acemad}
+Zhiwei Liu et~al.
+\newblock Breaking the martingale curse: Multi-agent debate via asymmetric
+  cognitive potential energy ({AceMAD}).
+\newblock \emph{arXiv preprint arXiv:2603.06801}, 2026.
+\newblock MBZUAI/Renmin/Harvard.
+
+\bibitem[Oh et~al.(2025)Oh, Jeong, Ko, and Yun]{oh2025dreamad}
+Seungbeen Oh, Hyejin Jeong, Youngjoong Ko, and Seyoung Yun.
+\newblock Bias entrenchment in multi-agent debate ({DReaMAD}).
+\newblock \emph{arXiv preprint arXiv:2503.16814}, 2025.
+
+\bibitem[Planck(1950)]{planck1950}
+Max Planck.
+\newblock \emph{Scientific Autobiography and Other Papers}.
+\newblock Philosophical Library, New York, 1950.
+
+\bibitem[Sio \& Ormerod(2009)Sio and Ormerod]{sio2009incubation}
+Ut~Na Sio and Thomas~C. Ormerod.
+\newblock Does incubation enhance problem solving? {A} meta-analytic review.
+\newblock \emph{Psychological Bulletin}, 2009.
+
+\bibitem[Slamecka \& Graf(1978)Slamecka and Graf]{slamecka1978generation}
+Norman~J. Slamecka and Peter Graf.
+\newblock The generation effect: Delineation of a phenomenon.
+\newblock \emph{Journal of Experimental Psychology: Human Learning and Memory},
+  1978.
+
+\bibitem[Song(2026)]{song2026ccr}
+Tae-Eun Song.
+\newblock Cross-context review: Improving {LLM} output quality by separating
+  production and review sessions.
+\newblock \emph{arXiv preprint arXiv:2603.12123}, 2026.
+
+\bibitem[Storm \& Levy(2012)Storm and Levy]{storm2012forgetting}
+Benjamin~C. Storm and Benjamin~J. Levy.
+\newblock A progress report on the inhibition account of retrieval-induced
+  forgetting.
+\newblock \emph{Memory \& Cognition}, 2012.
+\newblock See also Chrysikou, E.G. and Weisberg, R.W. ``Following the Wrong
+  Footsteps: Fixation Effects of Pictorial Examples in a Design Problem-Solving
+  Task.'' \emph{J. Experimental Psychology: Applied}, 2005.
+
+\end{thebibliography}
