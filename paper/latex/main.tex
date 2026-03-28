@@ -618,7 +618,7 @@ Ploidy & \textbf{5F} & \textbf{5F} & .500 & .556 \\
 \end{tabular}
 \end{table}
 
-Ploidy's recall on this task was deterministic (5/5 in both runs) while Single's was stochastic (3--4/5). This stability, rather than the absolute F1 value, is the most noteworthy observation from these pilot experiments.
+Ploidy's recall on this task was consistent across limited runs (5/5 in both runs, $n{=}2$) while Single's varied (3--4/5). This stability, rather than the absolute F1 value, is the most noteworthy observation from these pilot experiments. However, two runs are insufficient to establish deterministic behavior; confirming this would require $\geq$5 repetitions with statistical testing.
 
 \paragraph{Execution time variance.} Stochastic variance manifests not only in output quality but in wall-clock execution time. Across 170 multi-run entries on Claude Opus~4.6 (same model, same task, same method, same effort level), elapsed time varied by up to 3.3$\times$ between runs.
 

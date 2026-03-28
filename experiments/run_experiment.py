@@ -51,6 +51,7 @@ LANGUAGE = "en"  # default output language
 INJECTION_MODE = "raw"  # default context injection mode
 DEEP_N = 1  # number of Deep sessions (stochastic sampling)
 FRESH_N = 1  # number of Fresh sessions (stochastic sampling)
+CONTEXT_PCT = 100  # percentage of context given to Deep sessions (0-100)
 
 # Valid effort levels for Claude Code
 EFFORT_LEVELS = ["low", "medium", "high", "max"]
@@ -149,6 +150,28 @@ def format_deep_context(context: str, mode: str = None) -> str:
     return INJECTION_MODES[actual_mode]["format"](context)
 
 
+def truncate_context(context: str, pct: float) -> str:
+    """Truncate context to a given percentage, snapping to sentence boundaries.
+
+    Args:
+        context: Full context string.
+        pct: Percentage of context to retain (0-100).
+
+    Returns:
+        Truncated context string.
+    """
+    if pct >= 100:
+        return context
+    if pct <= 0:
+        return ""
+    target_len = int(len(context) * pct / 100)
+    truncated = context[:target_len]
+    last_period = truncated.rfind(".")
+    if last_period > target_len * 0.7:
+        return truncated[: last_period + 1]
+    return truncated
+
+
 def build_deep_prompt(task_context: str, task_prompt: str, mode: str = None) -> str:
     """Build the full Deep session prompt with injection-mode-appropriate context.
 
@@ -164,6 +187,7 @@ def build_deep_prompt(task_context: str, task_prompt: str, mode: str = None) -> 
         The user prompt (context may be embedded or separate depending on mode).
     """
     actual_mode = mode or INJECTION_MODE
+    task_context = truncate_context(task_context, CONTEXT_PCT)
     formatted_ctx = format_deep_context(task_context, actual_mode)
 
     if actual_mode == "system_prompt":
@@ -256,8 +280,11 @@ def _call_claude(prompt: str, model: str, effort: str, system_prompt: str = None
     cmd.append(prompt)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
-        raise RuntimeError(f"claude CLI error: {result.stderr.strip()}")
+        err_msg = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(f"claude CLI error: {err_msg}")
     output = result.stdout.strip()
+    if "hit your limit" in output.lower() or "resets" in output.lower():
+        raise RuntimeError(f"claude CLI error: {output[:200]}")
     full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
     _track_tokens(_estimate_tokens(full_prompt), _estimate_tokens(output))
     return output
@@ -345,6 +372,34 @@ def _call_openai_api(prompt: str, model: str, effort: str, system_prompt: str = 
     return response.choices[0].message.content or ""
 
 
+def _calc_wait_until_reset(err_msg: str) -> int:
+    """Parse reset time from error message and return seconds to wait.
+
+    Error format: "You've hit your limit · resets 6am (Asia/Seoul)"
+    Falls back to 60s if parsing fails.
+    """
+    import re
+    from datetime import datetime, timedelta
+
+    match = re.search(r"resets\s+(\d{1,2})(am|pm)", err_msg.lower())
+    if match:
+        hour = int(match.group(1))
+        ampm = match.group(2)
+        if ampm == "pm" and hour != 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+
+        now = datetime.now()
+        target = now.replace(hour=hour, minute=1, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        wait = int((target - now).total_seconds())
+        return max(wait, 60)  # at least 60s
+
+    return 60  # fallback
+
+
 _BACKENDS = {
     "claude": _call_claude,
     "gemini": _call_gemini,
@@ -384,7 +439,32 @@ def call_llm(
     backend_fn = _BACKENDS.get(BACKEND)
     if backend_fn is None:
         raise ValueError(f"Unknown backend: {BACKEND}. Choose from: {list(_BACKENDS.keys())}")
-    return backend_fn(prompt, actual_model, eff, system_prompt)
+
+    max_retries = 20
+    for attempt in range(max_retries):
+        try:
+            return backend_fn(prompt, actual_model, eff, system_prompt)
+        except (RuntimeError, subprocess.TimeoutExpired, OSError) as e:
+            err_str = str(e).lower()
+            is_retriable = "cli error" in err_str or any(
+                kw in err_str
+                for kw in ["rate limit", "quota", "429", "capacity", "overloaded",
+                            "too many", "limit", "usage", "exceeded", "unavailable",
+                            "503", "502", "timeout", "hit your limit"]
+            )
+            if is_retriable and attempt < max_retries - 1:
+                wait = _calc_wait_until_reset(str(e))
+                from datetime import datetime as _dt
+                now = _dt.now().strftime("%H:%M")
+                print(
+                    f"\n  ⏳ Limit hit at {now}: {str(e)[:120]}"
+                )
+                print(
+                    f"    Sleeping {wait}s (~{wait // 60}min) until reset..."
+                )
+                time.sleep(wait)
+                continue
+            raise
 
 
 def call_llm_multi_turn(turns: list[dict], model: str = None, effort: str = None) -> str:
@@ -723,6 +803,34 @@ def method_second_opinion(task: Task) -> str:
     r1 = call_llm(prompt, system_prompt=sys_prompt)
     r2 = call_llm(prompt, system_prompt=sys_prompt)
     return f"=== Opinion 1 ===\n{r1}\n\n=== Opinion 2 ===\n{r2}"
+
+
+def method_new_task_sim(task: Task) -> str:
+    """Simulate commercial 'New Task' reset: Deep answer + Fresh answer, no debate.
+
+    Models the workflow where a user gets an answer with full context,
+    then clicks 'New Task' (discarding context) and asks again.
+    Unlike Ploidy, there is no structured debate or challenge phase —
+    the two perspectives are simply concatenated.
+    """
+    sys_prompt = get_system_prompt_for_mode(task.context)
+    # Session 1: full context (before reset)
+    deep_answer = call_llm(
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.",
+        system_prompt=sys_prompt,
+    )
+    # Session 2: no context (after 'New Task' reset)
+    fresh_answer = call_llm(
+        f"{task.prompt}\n\n"
+        f"You have NO background context about this system. "
+        f"Review based purely on the code/question itself.\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical."
+    )
+    return (
+        f"=== Before Reset (Full Context) ===\n{deep_answer}\n\n"
+        f"=== After New Task (No Context) ===\n{fresh_answer}"
+    )
 
 
 def method_ccr(task: Task) -> str:
@@ -1201,6 +1309,7 @@ def judge_result(task: Task, method_name: str, output: str) -> dict:
 METHODS = {
     "single": ("Single Session", method_single_session),
     "second_opinion": ("Second Opinion", method_second_opinion),
+    "new_task_sim": ("New Task Simulation", method_new_task_sim),
     "ccr": ("CCR (Unidirectional)", method_ccr),
     "symmetric": ("Symmetric Debate", method_symmetric_debate),
     "ploidy": ("Ploidy (Asymmetric)", method_ploidy),
@@ -1214,7 +1323,7 @@ METHODS = {
 }
 
 
-def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str = None):
+def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str = None, resume_dir: Path = None):
     """Run experiments across tasks and methods.
 
     Args:
@@ -1222,17 +1331,22 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
         method_ids: Specific method keys to run (None = all).
         effort: Effort level override for this run.
         lang: Language code for localization (en/ko/ja/zh).
+        resume_dir: If set, resume into this directory, skipping existing results.
     """
     tasks = TASKS if task_ids is None else [TASKS[i] for i in task_ids]
     methods = METHODS if method_ids is None else {k: METHODS[k] for k in method_ids}
     eff = effort or EFFORT
     actual_lang = lang or LANGUAGE
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     inj = INJECTION_MODE
-    results_dir = (
-        Path(__file__).parent / "results" / f"{timestamp}_effort-{eff}_lang-{actual_lang}_inj-{inj}"
-    )
+    if resume_dir and resume_dir.exists():
+        results_dir = resume_dir
+        print(f"  ▶ Resuming into: {results_dir}")
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_dir = (
+            Path(__file__).parent / "results" / f"{timestamp}_effort-{eff}_lang-{actual_lang}_inj-{inj}"
+        )
     results_dir.mkdir(parents=True, exist_ok=True)
 
     all_results = []
@@ -1245,6 +1359,17 @@ def run_experiment(task_ids=None, method_ids=None, effort: str = None, lang: str
         print(f"{'=' * 60}")
 
         for method_id, (method_name, method_fn) in methods.items():
+            result_file = results_dir / f"{task.id}_{method_id}.json"
+            if result_file.exists():
+                print(f"\n  [{method_name}] SKIP (already exists)")
+                try:
+                    with open(result_file) as f:
+                        existing = json.load(f)
+                    if "error" not in existing:
+                        all_results.append(existing)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+                continue
             print(f"\n  [{method_name}] running (effort={eff})...", end=" ", flush=True)
             t0 = time.time()
             reset_token_tracker()
@@ -1670,6 +1795,80 @@ def run_ploidy_sweep(task_ids=None, method_ids=None, levels=None):
     return all_ploidy_results
 
 
+def run_context_pct_sweep(task_ids=None, method_ids=None, percentages=None):
+    """Run experiments across context percentages for dose-response analysis.
+
+    Tests how much context Deep sessions need before debate quality plateaus.
+    This models the 'context entrenchment' hypothesis: at some point,
+    additional context hurts more than it helps due to anchoring.
+
+    Args:
+        task_ids: Specific task indices to run.
+        method_ids: Specific method keys to run.
+        percentages: Context percentages to sweep (default: [0, 25, 50, 75, 100]).
+
+    Returns:
+        Aggregated results across all context percentages.
+    """
+    global CONTEXT_PCT
+    sweep_pcts = percentages or [0, 25, 50, 75, 100]
+    all_pct_results = []
+
+    print(f"\n{'#' * 80}")
+    print(f"CONTEXT PERCENTAGE SWEEP: {sweep_pcts}")
+    print(f"{'#' * 80}")
+
+    for pct in sweep_pcts:
+        CONTEXT_PCT = pct
+        print(f"\n\n{'*' * 80}")
+        print(f"  CONTEXT: {pct}% of full context to Deep sessions")
+        print(f"{'*' * 80}")
+
+        results = run_experiment(task_ids, method_ids)
+        for r in results:
+            r["context_pct"] = pct
+        all_pct_results.extend(results)
+
+    # Cross-pct summary
+    print(f"\n\n{'#' * 80}")
+    print("CONTEXT PERCENTAGE SWEEP SUMMARY")
+    print(f"{'#' * 80}")
+    print(f"{'Context%':<12} {'Method':<22} {'Avg F1':>8} {'Avg Recall':>12} {'Avg Time':>10}")
+    print("-" * 75)
+
+    methods = METHODS if method_ids is None else {k: METHODS[k] for k in method_ids}
+    for pct in sweep_pcts:
+        pct_results = [r for r in all_pct_results if r.get("context_pct") == pct]
+        for method_key, (method_name, _) in methods.items():
+            method_results = [
+                r for r in pct_results if r["method"] == method_key and "judgment" in r
+            ]
+            if not method_results:
+                continue
+            avg_f1 = sum(r["judgment"].get("f1", 0) for r in method_results) / len(
+                method_results
+            )
+            avg_recall = sum(
+                r["judgment"].get("recall", 0) for r in method_results
+            ) / len(method_results)
+            avg_time = sum(r.get("elapsed_seconds", 0) for r in method_results) / len(
+                method_results
+            )
+            print(
+                f"  {pct:>3}%       {method_name:<22} {avg_f1:>8.3f} {avg_recall:>12.3f} {avg_time:>9.1f}s"
+            )
+
+    # Save sweep results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    sweep_dir = Path(__file__).parent / "results" / f"{timestamp}_context-pct-sweep"
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    with open(sweep_dir / "context_pct_sweep_summary.json", "w") as f:
+        json.dump(all_pct_results, f, indent=2, ensure_ascii=False)
+    print(f"\nContext % sweep saved: {sweep_dir}")
+
+    return all_pct_results
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ploidy Experiment Runner")
     parser.add_argument("--tasks", type=str, help="Task indices, e.g., 0,1,2")
@@ -1766,6 +1965,28 @@ if __name__ == "__main__":
         help="LLM backend: claude (CLI, free with subscription) or openai (API, supports OpenRouter/Ollama via OPENAI_BASE_URL)",
     )
     parser.add_argument(
+        "--context-pct",
+        type=int,
+        default=100,
+        help="Percentage of context given to Deep sessions (0-100, default: 100)",
+    )
+    parser.add_argument(
+        "--context-pct-sweep",
+        action="store_true",
+        help="Run context percentage sweep for dose-response analysis",
+    )
+    parser.add_argument(
+        "--context-pcts",
+        type=str,
+        help="Specific context percentages for sweep, e.g., 0,25,50,75,100",
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Resume into an existing results directory (skip completed task-method pairs)",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         default=0.0,
@@ -1788,6 +2009,7 @@ if __name__ == "__main__":
     EFFORT = args.effort
     LANGUAGE = args.lang
     INJECTION_MODE = args.injection
+    CONTEXT_PCT = args.context_pct
     if args.ploidy is not None:
         DEEP_N = args.ploidy
         FRESH_N = args.ploidy
@@ -1818,7 +2040,12 @@ if __name__ == "__main__":
     task_ids = [int(x) for x in args.tasks.split(",")] if args.tasks else None
     method_ids = args.methods.split(",") if args.methods else None
 
-    if args.effort_sweep:
+    if args.context_pct_sweep:
+        sweep_pcts = (
+            [int(x) for x in args.context_pcts.split(",")] if args.context_pcts else None
+        )
+        run_context_pct_sweep(task_ids, method_ids, sweep_pcts)
+    elif args.effort_sweep:
         sweep_efforts = args.efforts.split(",") if args.efforts else None
         run_effort_sweep(task_ids, method_ids, sweep_efforts)
     elif args.lang_sweep:
@@ -1833,4 +2060,5 @@ if __name__ == "__main__":
         )
         run_ploidy_sweep(task_ids, method_ids, sweep_levels)
     else:
-        run_experiment(task_ids, method_ids)
+        resume_dir = Path(args.resume) if args.resume else None
+        run_experiment(task_ids, method_ids, resume_dir=resume_dir)
