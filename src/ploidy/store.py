@@ -79,6 +79,13 @@ _SESSION_MIGRATIONS = (
     ("metadata_json", "ALTER TABLE sessions ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"),
 )
 
+_DEBATE_MIGRATIONS = (
+    (
+        "paused_context",
+        "ALTER TABLE debates ADD COLUMN paused_context TEXT",
+    ),
+)
+
 _CREATE_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_debates_status ON debates(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_debate_id ON sessions(debate_id);
@@ -153,6 +160,12 @@ class DebateStore:
         columns = {row["name"] for row in await cursor.fetchall()}
         for column, statement in _SESSION_MIGRATIONS:
             if column not in columns:
+                await db.execute(statement)
+
+        cursor = await db.execute("PRAGMA table_info(debates)")
+        debate_columns = {row["name"] for row in await cursor.fetchall()}
+        for column, statement in _DEBATE_MIGRATIONS:
+            if column not in debate_columns:
                 await db.execute(statement)
 
     # ------------------------------------------------------------------
@@ -237,6 +250,68 @@ class DebateStore:
             (status, debate_id),
         )
         await db.commit()
+
+    async def save_paused_context(self, debate_id: str, context: dict) -> None:
+        """Persist paused auto-debate context alongside the debate record.
+
+        This ensures HITL paused state survives server restarts.
+
+        Args:
+            debate_id: The paused debate.
+            context: The auto-debate context dict to serialize.
+        """
+        db = _require_db(self._db)
+        await db.execute(
+            "UPDATE debates SET paused_context = ?, updated_at = datetime('now') WHERE id = ?",
+            (json.dumps(context), debate_id),
+        )
+        await db.commit()
+
+    async def load_paused_context(self, debate_id: str) -> dict | None:
+        """Load persisted paused context for a debate.
+
+        Args:
+            debate_id: The debate to look up.
+
+        Returns:
+            The paused context dict, or None if not found.
+        """
+        db = _require_db(self._db)
+        cursor = await db.execute(
+            "SELECT paused_context FROM debates WHERE id = ?",
+            (debate_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None or row["paused_context"] is None:
+            return None
+        return json.loads(row["paused_context"])
+
+    async def clear_paused_context(self, debate_id: str) -> None:
+        """Clear persisted paused context (e.g., after resume or cancel).
+
+        Args:
+            debate_id: The debate to clear paused context for.
+        """
+        db = _require_db(self._db)
+        await db.execute(
+            "UPDATE debates SET paused_context = NULL, updated_at = datetime('now') WHERE id = ?",
+            (debate_id,),
+        )
+        await db.commit()
+
+    async def list_paused_debates(self) -> list[dict]:
+        """List paused debates for state recovery.
+
+        Returns:
+            List of paused debate records.
+        """
+        db = _require_db(self._db)
+        cursor = await db.execute(
+            "SELECT id, prompt, status, paused_context, created_at, updated_at "
+            "FROM debates WHERE status = 'paused' ORDER BY created_at",
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Sessions

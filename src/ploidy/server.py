@@ -188,6 +188,84 @@ async def _recover_state(store: DebateStore) -> None:
     if recovered:
         logger.info("Recovered %d active debate(s) from database", recovered)
 
+    # Recover paused debates (HITL state)
+    paused_debates = await store.list_paused_debates()
+    paused_recovered = 0
+    for debate in paused_debates:
+        debate_id = debate["id"]
+        if debate_id in _paused_debates:
+            continue
+
+        paused_ctx_raw = debate.get("paused_context")
+        if not paused_ctx_raw:
+            logger.warning("Paused debate %s has no persisted context, skipping", debate_id)
+            continue
+
+        if isinstance(paused_ctx_raw, str):
+            paused_ctx = json.loads(paused_ctx_raw)
+        else:
+            paused_ctx = paused_ctx_raw
+
+        # Reconstruct protocol at the saved phase
+        protocol = DebateProtocol(debate_id, debate["prompt"])
+        saved_phase = paused_ctx.get("protocol_phase", "position")
+        phase_order = [p.value for p in DebatePhase]
+        target_idx = phase_order.index(saved_phase) if saved_phase in phase_order else 1
+        for _ in range(target_idx):
+            try:
+                protocol.advance_phase()
+            except ProtocolError:
+                break
+
+        # Replay persisted messages into protocol
+        messages = await store.get_messages(debate_id)
+        for m in messages:
+            action = SemanticAction(m["action"]) if m["action"] else None
+            msg = DebateMessage(
+                session_id=m["session_id"],
+                phase=DebatePhase(m["phase"]),
+                content=m["content"],
+                timestamp=m["timestamp"] or _now(),
+                action=action,
+            )
+            protocol.messages.append(msg)
+
+        # Recover sessions
+        sessions = await store.get_sessions(debate_id)
+        session_ids = []
+        for s in sessions:
+            role_map = {
+                "experienced": SessionRole.EXPERIENCED,
+                "semi_fresh": SessionRole.SEMI_FRESH,
+                "fresh": SessionRole.FRESH,
+            }
+            role = role_map.get(s["role"], SessionRole.FRESH)
+            try:
+                delivery_mode = DeliveryMode(s.get("delivery_mode", "none"))
+            except ValueError:
+                delivery_mode = DeliveryMode.NONE
+            ctx = SessionContext(
+                session_id=s["id"],
+                role=role,
+                base_prompt=s["base_prompt"],
+                context_documents=s.get("context_documents", []),
+                delivery_mode=delivery_mode,
+                compressed_summary=s.get("compressed_summary"),
+                metadata=s.get("metadata", {}),
+            )
+            _sessions[s["id"]] = ctx
+            _session_to_debate[s["id"]] = debate_id
+            session_ids.append(s["id"])
+
+        _protocols[debate_id] = protocol
+        _debate_sessions[debate_id] = session_ids
+        _debate_locks[debate_id] = asyncio.Lock()
+        _paused_debates[debate_id] = paused_ctx
+        paused_recovered += 1
+
+    if paused_recovered:
+        logger.info("Recovered %d paused debate(s) from database", paused_recovered)
+
 
 def _find_debate(session_id: str) -> str:
     """Look up debate_id from a session_id via reverse index."""
@@ -198,10 +276,13 @@ def _find_debate(session_id: str) -> str:
 
 
 def _get_lock(debate_id: str) -> asyncio.Lock:
-    """Get or create a per-debate lock."""
-    if debate_id not in _debate_locks:
-        _debate_locks[debate_id] = asyncio.Lock()
-    return _debate_locks[debate_id]
+    """Get or create a per-debate lock.
+
+    Uses dict.setdefault() which is atomic in CPython to avoid a
+    TOCTOU race where concurrent async tasks could each create a
+    different Lock for the same debate_id.
+    """
+    return _debate_locks.setdefault(debate_id, asyncio.Lock())
 
 
 def _now() -> str:
@@ -934,7 +1015,7 @@ async def debate_auto(
 
         # HITL checkpoint: pause before challenge phase
         if pause_at == "challenge":
-            _paused_debates[debate_id] = {
+            paused_ctx = {
                 "exp_id": exp_id,
                 "auto_id": auto_id,
                 "exp_pos": exp_pos,
@@ -942,8 +1023,11 @@ async def debate_auto(
                 "fresh_role": fresh_role,
                 "delivery_mode": delivery_mode,
                 "paused_phase": "challenge",
+                "protocol_phase": protocol.phase.value,
             }
+            _paused_debates[debate_id] = paused_ctx
             await store.update_debate_status(debate_id, "paused")
+            await store.save_paused_context(debate_id, paused_ctx)
             logger.info("Auto-debate %s paused before challenge phase (HITL)", debate_id)
             return {
                 "debate_id": debate_id,
@@ -985,7 +1069,7 @@ async def debate_auto(
 
         # HITL checkpoint: pause before convergence phase
         if pause_at == "convergence":
-            _paused_debates[debate_id] = {
+            paused_ctx = {
                 "exp_id": exp_id,
                 "auto_id": auto_id,
                 "exp_pos": exp_pos,
@@ -995,8 +1079,11 @@ async def debate_auto(
                 "fresh_role": fresh_role,
                 "delivery_mode": delivery_mode,
                 "paused_phase": "convergence",
+                "protocol_phase": protocol.phase.value,
             }
+            _paused_debates[debate_id] = paused_ctx
             await store.update_debate_status(debate_id, "paused")
+            await store.save_paused_context(debate_id, paused_ctx)
             logger.info("Auto-debate %s paused before convergence (HITL)", debate_id)
             return {
                 "debate_id": debate_id,
@@ -1109,6 +1196,7 @@ async def debate_review(
         raise ProtocolError("override_content is required when action='override'")
 
     ctx = _paused_debates.pop(debate_id)
+    await store.clear_paused_context(debate_id)
     protocol = _protocols.get(debate_id)
 
     if protocol is None:
