@@ -1319,4 +1319,5 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _shutdown_handler)
     signal.signal(signal.SIGINT, _shutdown_handler)
 
-    mcp.run(transport="streamable-http")
+    transport = os.environ.get("PLOIDY_TRANSPORT", "streamable-http")
+    mcp.run(transport=transport)

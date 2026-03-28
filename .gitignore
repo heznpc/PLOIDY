@@ -56,6 +56,10 @@ paper/research-program.md
 paper/context-as-lifespan-outline.md
 paper/draft-v1.md
 paper/draft-v2.md
+diploid-paper-outline.md
+
+# Experiment scripts (local only)
+experiments/resume_all.sh
 
 # Experiment results (large, local only)
 experiments/results/
