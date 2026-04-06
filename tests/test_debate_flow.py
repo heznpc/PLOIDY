@@ -41,7 +41,7 @@ async def test_full_debate_flow():
         prompt="Should we use monorepo or polyrepo?",
         context_documents=["We have 3 teams, 12 microservices"],
     )
-    assert start["role"] == "experienced"
+    assert start["role"] == "deep"
     assert start["phase"] == "independent"
     debate_id = start["debate_id"]
     exp_id = start["session_id"]
@@ -255,7 +255,7 @@ async def test_session_context_is_recovered():
     await server._init()
 
     sessions = {sid: ctx for sid, ctx in server._sessions.items() if sid.startswith(debate_id)}
-    exp = next(ctx for ctx in sessions.values() if ctx.role.value == "experienced")
+    exp = next(ctx for ctx in sessions.values() if ctx.role.value == "deep")
     sf = next(ctx for ctx in sessions.values() if ctx.role.value == "semi_fresh")
 
     assert exp.context_documents == ["doc-a", "doc-b"]
@@ -268,24 +268,24 @@ async def test_debate_auto_generates_both_sides(monkeypatch):
     """Auto debate should generate positions and challenges for both sessions."""
     monkeypatch.setattr(api_client, "is_api_available", lambda: True)
 
-    async def fake_exp(prompt, context_documents, effort="high", model=None):
-        assert prompt == "Auto prompt"
-        assert context_documents == ["ctx"]
-        return "experienced position"
+    async def fake_exp(prompt, context_documents=None, effort="high", model=None):
+        # With injection_mode="raw", context is embedded in prompt
+        assert "Auto prompt" in prompt
+        return "deep position"
 
     async def fake_fresh(prompt, effort="high", model=None):
-        assert prompt == "Auto prompt"
+        assert "Auto prompt" in prompt
         return "fresh position"
 
     async def fake_challenge(
         own_position,
         other_position,
         own_role="fresh",
-        other_role="experienced",
+        other_role="deep",
         effort="high",
         model=None,
     ):
-        return f"{own_role} challenge vs {other_role}: {own_position} / {other_position}"
+        return f"{own_role} CHALLENGE vs {other_role}: {own_position} / {other_position}"
 
     monkeypatch.setattr(api_client, "generate_experienced_position", fake_exp)
     monkeypatch.setattr(api_client, "generate_fresh_position", fake_fresh)
@@ -294,6 +294,7 @@ async def test_debate_auto_generates_both_sides(monkeypatch):
     result = await server.debate_auto(prompt="Auto prompt", context_documents=["ctx"])
 
     assert result["phase"] == "complete"
+    assert "config" in result
 
     history = await server.debate_history()
     debate_id = result["debate_id"]
@@ -305,15 +306,15 @@ async def test_debate_auto_generates_both_sides(monkeypatch):
 
     assert len(position_messages) == 2
     assert len(challenge_messages) == 2
-    assert {m["content"] for m in position_messages} == {"experienced position", "fresh position"}
+    assert {m["content"] for m in position_messages} == {"deep position", "fresh position"}
 
 
 async def test_debate_auto_cleans_up_failed_runs(monkeypatch):
     """Failed auto debates should not leave partial active records behind."""
     monkeypatch.setattr(api_client, "is_api_available", lambda: True)
 
-    async def fake_exp(prompt, context_documents, effort="high", model=None):
-        return "experienced position"
+    async def fake_exp(prompt, context_documents=None, effort="high", model=None):
+        return "deep position"
 
     async def fake_fresh(prompt, effort="high", model=None):
         raise RuntimeError("boom")

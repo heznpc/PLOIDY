@@ -77,6 +77,8 @@ _SESSION_MIGRATIONS = (
     ("delivery_mode", "ALTER TABLE sessions ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'none'"),
     ("compressed_summary", "ALTER TABLE sessions ADD COLUMN compressed_summary TEXT"),
     ("metadata_json", "ALTER TABLE sessions ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"),
+    ("model", "ALTER TABLE sessions ADD COLUMN model TEXT"),
+    ("effort", "ALTER TABLE sessions ADD COLUMN effort TEXT NOT NULL DEFAULT 'high'"),
 )
 
 _DEBATE_MIGRATIONS = (
@@ -84,6 +86,18 @@ _DEBATE_MIGRATIONS = (
         "paused_context",
         "ALTER TABLE debates ADD COLUMN paused_context TEXT",
     ),
+    (
+        "config_json",
+        "ALTER TABLE debates ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'",
+    ),
+)
+
+_MESSAGE_MIGRATIONS = (
+    ("round", "ALTER TABLE messages ADD COLUMN round INTEGER NOT NULL DEFAULT 1"),
+)
+
+_CONVERGENCE_MIGRATIONS = (
+    ("meta_analysis", "ALTER TABLE convergence ADD COLUMN meta_analysis TEXT"),
 )
 
 _CREATE_INDEXES = """
@@ -156,33 +170,35 @@ class DebateStore:
     async def _migrate_schema(self) -> None:
         """Apply additive schema migrations for older databases."""
         db = _require_db(self._db)
-        cursor = await db.execute("PRAGMA table_info(sessions)")
-        columns = {row["name"] for row in await cursor.fetchall()}
-        for column, statement in _SESSION_MIGRATIONS:
-            if column not in columns:
-                await db.execute(statement)
 
-        cursor = await db.execute("PRAGMA table_info(debates)")
-        debate_columns = {row["name"] for row in await cursor.fetchall()}
-        for column, statement in _DEBATE_MIGRATIONS:
-            if column not in debate_columns:
-                await db.execute(statement)
+        async def _apply_migrations(table: str, migrations: tuple) -> None:
+            cursor = await db.execute(f"PRAGMA table_info({table})")
+            columns = {row["name"] for row in await cursor.fetchall()}
+            for column, statement in migrations:
+                if column not in columns:
+                    await db.execute(statement)
+
+        await _apply_migrations("sessions", _SESSION_MIGRATIONS)
+        await _apply_migrations("debates", _DEBATE_MIGRATIONS)
+        await _apply_migrations("messages", _MESSAGE_MIGRATIONS)
+        await _apply_migrations("convergence", _CONVERGENCE_MIGRATIONS)
 
     # ------------------------------------------------------------------
     # Debates
     # ------------------------------------------------------------------
 
-    async def save_debate(self, debate_id: str, prompt: str) -> None:
+    async def save_debate(self, debate_id: str, prompt: str, config: dict | None = None) -> None:
         """Persist a new debate record.
 
         Args:
             debate_id: Unique identifier for the debate.
             prompt: The decision prompt for the debate.
+            config: Optional debate configuration dict (ploidy, injection, etc.).
         """
         db = _require_db(self._db)
         await db.execute(
-            "INSERT INTO debates (id, prompt) VALUES (?, ?)",
-            (debate_id, prompt),
+            "INSERT INTO debates (id, prompt, config_json) VALUES (?, ?, ?)",
+            (debate_id, prompt, json.dumps(config or {})),
         )
         await db.commit()
 
@@ -327,20 +343,25 @@ class DebateStore:
         delivery_mode: str = "none",
         compressed_summary: str | None = None,
         metadata: dict | None = None,
+        model: str | None = None,
+        effort: str = "high",
     ) -> None:
         """Persist a new session record.
 
         Args:
             session_id: Unique identifier for the session.
             debate_id: The debate this session belongs to.
-            role: Session role ('experienced' or 'fresh').
+            role: Session role ('deep', 'semi_fresh', or 'fresh').
             base_prompt: The decision prompt for this session.
+            model: Model identifier used for this session.
+            effort: Effort level for this session.
         """
         db = _require_db(self._db)
         await db.execute(
             "INSERT INTO sessions "
             "(id, debate_id, role, base_prompt, context_documents, delivery_mode, "
-            "compressed_summary, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "compressed_summary, metadata_json, model, effort) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 debate_id,
@@ -350,6 +371,8 @@ class DebateStore:
                 delivery_mode,
                 compressed_summary,
                 json.dumps(metadata or {}),
+                model,
+                effort,
             ),
         )
         await db.commit()
@@ -453,7 +476,12 @@ class DebateStore:
     # ------------------------------------------------------------------
 
     async def save_convergence(
-        self, debate_id: str, synthesis: str, confidence: float, points_json: str
+        self,
+        debate_id: str,
+        synthesis: str,
+        confidence: float,
+        points_json: str,
+        meta_analysis: str | None = None,
     ) -> None:
         """Persist a convergence result.
 
@@ -462,12 +490,14 @@ class DebateStore:
             synthesis: The synthesized recommendation.
             confidence: Confidence score (0.0 to 1.0).
             points_json: JSON string of convergence points.
+            meta_analysis: Optional LLM meta-analysis text.
         """
         db = _require_db(self._db)
         await db.execute(
-            "INSERT INTO convergence (debate_id, synthesis, confidence, points_json) "
-            "VALUES (?, ?, ?, ?)",
-            (debate_id, synthesis, confidence, points_json),
+            "INSERT INTO convergence "
+            "(debate_id, synthesis, confidence, points_json, meta_analysis) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (debate_id, synthesis, confidence, points_json, meta_analysis),
         )
         await db.commit()
 
@@ -496,7 +526,12 @@ class DebateStore:
     # ------------------------------------------------------------------
 
     async def save_convergence_and_complete(
-        self, debate_id: str, synthesis: str, confidence: float, points_json: str
+        self,
+        debate_id: str,
+        synthesis: str,
+        confidence: float,
+        points_json: str,
+        meta_analysis: str | None = None,
     ) -> None:
         """Atomically save convergence result and mark debate as complete.
 
@@ -505,12 +540,14 @@ class DebateStore:
             synthesis: The synthesized recommendation.
             confidence: Confidence score (0.0 to 1.0).
             points_json: JSON string of convergence points.
+            meta_analysis: Optional LLM meta-analysis text.
         """
         db = _require_db(self._db)
         await db.execute(
-            "INSERT INTO convergence (debate_id, synthesis, confidence, points_json) "
-            "VALUES (?, ?, ?, ?)",
-            (debate_id, synthesis, confidence, points_json),
+            "INSERT INTO convergence "
+            "(debate_id, synthesis, confidence, points_json, meta_analysis) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (debate_id, synthesis, confidence, points_json, meta_analysis),
         )
         await db.execute(
             "UPDATE debates SET status = 'complete', updated_at = datetime('now') WHERE id = ?",

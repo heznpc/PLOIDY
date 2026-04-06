@@ -39,6 +39,10 @@ dashboard = [
     "uvicorn>=0.30",
     "aiosqlite>=0.20,<1",
 ]
+analysis = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -51,7 +55,7 @@ docs = [
     "mkdocs-minify-plugin",
 ]
 all = [
-    "ploidy[api,dashboard,dev,docs]",
+    "ploidy[api,dashboard,dev,docs,analysis]",
 ]
 
 [tool.ruff]

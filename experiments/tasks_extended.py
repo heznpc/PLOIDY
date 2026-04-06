@@ -13,7 +13,7 @@ Domains:
   - Dependency / migration (2)
 """
 
-from run_experiment import Task
+from task_model import Task
 
 EXTENDED_TASKS: list[Task] = [
     # ─── Architecture Decisions ──────────────────────────────────────────────

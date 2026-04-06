@@ -30,8 +30,14 @@ from mcp.types import ToolAnnotations
 
 from ploidy.convergence import ConvergenceEngine
 from ploidy.exceptions import PloidyError, ProtocolError, SessionError
+from ploidy.injection import (
+    VALID_INJECTION_MODES,
+    VALID_LANGUAGES,
+    append_language,
+    build_deep_prompt,
+)
 from ploidy.protocol import DebateMessage, DebatePhase, DebateProtocol, SemanticAction
-from ploidy.session import DeliveryMode, SessionContext, SessionRole
+from ploidy.session import DeliveryMode, EffortLevel, SessionContext, SessionRole
 from ploidy.store import DebateStore
 
 logger = logging.getLogger("ploidy")
@@ -120,7 +126,8 @@ async def _recover_state(store: DebateStore) -> None:
         session_ids = []
         for s in sessions:
             role_map = {
-                "experienced": SessionRole.EXPERIENCED,
+                "deep": SessionRole.DEEP,
+                "experienced": SessionRole.DEEP,  # backward compat
                 "semi_fresh": SessionRole.SEMI_FRESH,
                 "fresh": SessionRole.FRESH,
             }
@@ -136,6 +143,7 @@ async def _recover_state(store: DebateStore) -> None:
                 context_documents=s.get("context_documents", []),
                 delivery_mode=delivery_mode,
                 compressed_summary=s.get("compressed_summary"),
+                model=s.get("model"),
                 metadata=s.get("metadata", {}),
             )
             _sessions[s["id"]] = ctx
@@ -235,7 +243,8 @@ async def _recover_state(store: DebateStore) -> None:
         session_ids = []
         for s in sessions:
             role_map = {
-                "experienced": SessionRole.EXPERIENCED,
+                "deep": SessionRole.DEEP,
+                "experienced": SessionRole.DEEP,  # backward compat
                 "semi_fresh": SessionRole.SEMI_FRESH,
                 "fresh": SessionRole.FRESH,
             }
@@ -251,6 +260,7 @@ async def _recover_state(store: DebateStore) -> None:
                 context_documents=s.get("context_documents", []),
                 delivery_mode=delivery_mode,
                 compressed_summary=s.get("compressed_summary"),
+                model=s.get("model"),
                 metadata=s.get("metadata", {}),
             )
             _sessions[s["id"]] = ctx
@@ -296,6 +306,55 @@ def _validate_length(text: str, max_len: int, field: str) -> None:
         raise ProtocolError(f"{field} exceeds maximum length ({len(text)} > {max_len})")
 
 
+def _aggregate_positions(positions: list[str] | tuple[str, ...], role_label: str) -> str:
+    """Aggregate multiple session positions into a single text block.
+
+    For single-session ploidy (n=1), returns the position as-is.
+    For multi-session (n>1), wraps each in labeled sections.
+
+    Args:
+        positions: List of position texts.
+        role_label: Display label for the role (e.g., 'Deep', 'Fresh').
+
+    Returns:
+        Aggregated position text.
+    """
+    if len(positions) == 1:
+        return positions[0]
+    parts = []
+    for i, pos in enumerate(positions):
+        parts.append(f"--- {role_label} Session {i + 1}/{len(positions)} ---\n{pos}")
+    return "\n\n".join(parts)
+
+
+def _parse_dominant_action(challenge_content: str) -> SemanticAction:
+    """Parse the dominant semantic action from challenge response text.
+
+    Uses word-boundary regex to count AGREE/CHALLENGE/SYNTHESIZE keywords,
+    avoiding false matches (e.g., "DISAGREE" should not count as "AGREE").
+
+    Args:
+        challenge_content: The challenge response text.
+
+    Returns:
+        The most frequent semantic action found.
+    """
+    import re
+
+    upper = challenge_content.upper()
+    counts = {
+        # \bAGREE\b matches "AGREE" but not "DISAGREE"
+        SemanticAction.AGREE: len(re.findall(r"\bAGREE\b", upper)),
+        SemanticAction.CHALLENGE: len(re.findall(r"\bCHALLENGE\b", upper)),
+        SemanticAction.SYNTHESIZE: len(re.findall(r"\bSYNTHESIZE\b", upper)),
+        SemanticAction.PROPOSE_ALTERNATIVE: len(
+            re.findall(r"\bPROPOSE_ALTERNATIVE\b|\bALTERNATIVE\b", upper)
+        ),
+    }
+    # Default to CHALLENGE if no keywords found
+    return max(counts, key=counts.get) if any(counts.values()) else SemanticAction.CHALLENGE
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -311,12 +370,12 @@ def _validate_length(text: str, max_len: int, field: str) -> None:
 async def debate_start(prompt: str, context_documents: list[str] | None = None) -> dict:
     """Begin a new debate session with a decision prompt.
 
-    Creates a debate and an experienced (deep-context) session.
+    Creates a debate and a Deep (full-context) session.
     Share the returned debate_id with the fresh session so it can join.
 
     Args:
         prompt: The decision question to debate.
-        context_documents: Optional documents to give the experienced session.
+        context_documents: Optional documents to give the Deep session.
 
     Returns:
         Debate and session identifiers.
@@ -333,38 +392,38 @@ async def debate_start(prompt: str, context_documents: list[str] | None = None) 
     debate_id = uuid.uuid4().hex[:12]
     await store.save_debate(debate_id, prompt)
 
-    exp_id = f"{debate_id}-exp-{uuid.uuid4().hex[:6]}"
-    exp = SessionContext(
-        session_id=exp_id,
-        role=SessionRole.EXPERIENCED,
+    deep_id = f"{debate_id}-deep-{uuid.uuid4().hex[:6]}"
+    deep_ctx = SessionContext(
+        session_id=deep_id,
+        role=SessionRole.DEEP,
         base_prompt=prompt,
         context_documents=docs,
     )
     await store.save_session(
-        exp_id,
+        deep_id,
         debate_id,
-        "experienced",
+        "deep",
         prompt,
         context_documents=docs,
-        delivery_mode=exp.delivery_mode.value,
-        compressed_summary=exp.compressed_summary,
-        metadata=exp.metadata,
+        delivery_mode=deep_ctx.delivery_mode.value,
+        compressed_summary=deep_ctx.compressed_summary,
+        metadata=deep_ctx.metadata,
     )
 
-    _sessions[exp_id] = exp
-    _debate_sessions[debate_id] = [exp_id]
-    _session_to_debate[exp_id] = debate_id
+    _sessions[deep_id] = deep_ctx
+    _debate_sessions[debate_id] = [deep_id]
+    _session_to_debate[deep_id] = debate_id
 
     protocol = DebateProtocol(debate_id, prompt)
     _protocols[debate_id] = protocol
     _debate_locks[debate_id] = asyncio.Lock()
 
-    logger.info("Debate started: %s by session %s", debate_id, exp_id)
+    logger.info("Debate started: %s by session %s", debate_id, deep_id)
 
     return {
         "debate_id": debate_id,
-        "session_id": exp_id,
-        "role": "experienced",
+        "session_id": deep_id,
+        "role": "deep",
         "phase": protocol.phase.value,
         "prompt": prompt,
         "message": f"Debate created. Share this debate_id with the Fresh session: {debate_id}",
@@ -850,28 +909,47 @@ async def debate_auto(
     fresh_role: str = "fresh",
     delivery_mode: str = "none",
     pause_at: str | None = None,
+    # ── Paper experiment variables ──────────────────────────────────
+    deep_n: int = 1,
+    fresh_n: int = 1,
+    effort: str = "high",
+    injection_mode: str = "raw",
+    context_pct: int = 100,
+    language: str = "en",
+    # ── Beyond-paper user customization ─────────────────────────────
+    deep_model: str | None = None,
+    fresh_model: str | None = None,
 ) -> dict:
-    """Run a complete debate automatically in a single command (v0.2).
+    """Run a complete debate automatically in a single command.
 
-    Creates a debate, generates Fresh/Semi-Fresh responses via API,
-    runs the full protocol, and returns the convergence result.
+    Creates a debate with Deep(deep_n) × Fresh(fresh_n) sessions,
+    generates positions and challenges via API, runs the full protocol,
+    and returns the convergence result.
+
     Requires PLOIDY_API_BASE_URL to be configured.
 
     Args:
         prompt: The decision question to debate.
-        context_documents: Optional documents for the experienced session.
-        fresh_role: Role for auto-session — 'fresh' or 'semi_fresh'.
-        delivery_mode: Context delivery for semi-fresh — 'passive' or 'active'.
-        pause_at: Optional phase to pause at for human review — 'challenge'
-            (after positions, before challenges) or 'convergence' (after
-            challenges, before convergence). Use debate_review to resume.
+        context_documents: Optional documents for the Deep session(s).
+        fresh_role: Role for opposing side — 'fresh' or 'semi_fresh'.
+        delivery_mode: Context delivery for semi-fresh — 'passive', 'active', or 'selective'.
+        pause_at: Optional phase to pause at — 'challenge' or 'convergence'.
+        deep_n: Number of Deep sessions (ploidy level, deep side).
+        fresh_n: Number of Fresh/Semi-Fresh sessions (ploidy level, fresh side).
+        effort: Reasoning depth — 'low', 'medium', 'high', or 'max'.
+        injection_mode: How context is formatted — 'raw', 'system_prompt', 'memory',
+            'skills', or 'claude_md'.
+        context_pct: Percentage of context to retain (0-100).
+        language: Output language — 'en', 'ko', 'ja', or 'zh'.
+        deep_model: Model override for Deep sessions.
+        fresh_model: Model override for Fresh/Semi-Fresh sessions.
 
     Returns:
-        Complete debate result with convergence synthesis, or paused state
-        if pause_at is specified.
+        Complete debate result with convergence synthesis, or paused state.
     """
     try:
         from ploidy.api_client import (
+            compress_failures_only,
             compress_position,
             generate_challenge,
             generate_experienced_position,
@@ -887,6 +965,7 @@ async def debate_auto(
 
     store = await _init()
 
+    # ── Validate inputs ─────────────────────────────────────────────
     _validate_length(prompt, _MAX_PROMPT_LEN, "prompt")
     docs = context_documents or []
     if len(docs) > _MAX_CONTEXT_DOCS:
@@ -903,207 +982,351 @@ async def debate_auto(
         "none": DeliveryMode.NONE,
         "passive": DeliveryMode.PASSIVE,
         "active": DeliveryMode.ACTIVE,
+        "selective": DeliveryMode.SELECTIVE,
     }
     dm = dm_map.get(delivery_mode)
     if dm is None:
         raise ProtocolError(
-            f"Invalid delivery_mode '{delivery_mode}'. Must be 'none', 'passive', or 'active'"
+            f"Invalid delivery_mode '{delivery_mode}'. "
+            "Must be 'none', 'passive', 'active', or 'selective'"
         )
     if auto_role == SessionRole.FRESH and dm != DeliveryMode.NONE:
         raise ProtocolError("Fresh auto sessions must use delivery_mode='none'")
     if auto_role == SessionRole.SEMI_FRESH and dm == DeliveryMode.NONE:
-        raise ProtocolError("Semi-fresh auto sessions must use 'passive' or 'active'")
+        raise ProtocolError("Semi-fresh auto sessions must use 'passive', 'active', or 'selective'")
 
-    valid_pause = {None, "challenge", "convergence"}
-    if pause_at not in valid_pause:
+    if pause_at not in {None, "challenge", "convergence"}:
         raise ProtocolError(f"Invalid pause_at '{pause_at}'. Must be 'challenge' or 'convergence'")
+    if deep_n < 1 or fresh_n < 1:
+        raise ProtocolError("deep_n and fresh_n must be >= 1")
+    if deep_n + fresh_n > _MAX_SESSIONS_PER_DEBATE:
+        raise ProtocolError(
+            f"Total sessions ({deep_n}+{fresh_n}) exceeds max ({_MAX_SESSIONS_PER_DEBATE})"
+        )
+    try:
+        effort_level = EffortLevel(effort)
+    except ValueError:
+        raise ProtocolError(f"Invalid effort '{effort}'. Must be low/medium/high/max")
+    if injection_mode not in VALID_INJECTION_MODES:
+        valid = sorted(VALID_INJECTION_MODES)
+        raise ProtocolError(f"Invalid injection_mode '{injection_mode}'. Must be one of {valid}")
+    if not (0 <= context_pct <= 100):
+        raise ProtocolError("context_pct must be 0..100")
+    if language not in VALID_LANGUAGES:
+        raise ProtocolError(
+            f"Invalid language '{language}'. Must be one of {sorted(VALID_LANGUAGES)}"
+        )
 
-    # 1. Create debate + experienced session
+    # ── Prepare context with injection mode ─────────────────────────
+    # For injection_mode="system_prompt", context goes via system message.
+    # For all others, context is formatted and prepended to the user prompt.
+    raw_context = "\n\n".join(docs) if docs else ""
+    deep_user_prompt, deep_sys_prompt = build_deep_prompt(
+        raw_context, prompt, mode=injection_mode, context_pct=context_pct
+    )
+    deep_user_prompt = append_language(deep_user_prompt, language)
+    fresh_prompt = append_language(prompt, language)
+
+    # Build config for persistence
+    config = {
+        "deep_n": deep_n,
+        "fresh_n": fresh_n,
+        "effort": effort,
+        "injection_mode": injection_mode,
+        "context_pct": context_pct,
+        "language": language,
+        "deep_model": deep_model,
+        "fresh_model": fresh_model,
+        "fresh_role": fresh_role,
+        "delivery_mode": delivery_mode,
+    }
+
+    # ── 1. Create debate ────────────────────────────────────────────
     debate_id = uuid.uuid4().hex[:12]
-    await store.save_debate(debate_id, prompt)
-
-    exp_id = f"{debate_id}-exp-{uuid.uuid4().hex[:6]}"
-    exp = SessionContext(
-        session_id=exp_id,
-        role=SessionRole.EXPERIENCED,
-        base_prompt=prompt,
-        context_documents=docs,
-        delivery_mode=DeliveryMode.PASSIVE,
-    )
-    await store.save_session(
-        exp_id,
-        debate_id,
-        "experienced",
-        prompt,
-        context_documents=docs,
-        delivery_mode=exp.delivery_mode.value,
-        compressed_summary=exp.compressed_summary,
-        metadata=exp.metadata,
-    )
-
-    _sessions[exp_id] = exp
-    _debate_sessions[debate_id] = [exp_id]
-    _session_to_debate[exp_id] = debate_id
+    await store.save_debate(debate_id, prompt, config=config)
 
     protocol = DebateProtocol(debate_id, prompt)
     _protocols[debate_id] = protocol
     _debate_locks[debate_id] = asyncio.Lock()
+    _debate_sessions[debate_id] = []
 
-    # 2. Create auto-session
+    # ── 2. Create Deep sessions ─────────────────────────────────────
+    deep_sessions: list[SessionContext] = []
+    for i in range(deep_n):
+        sid = f"{debate_id}-deep-{i}-{uuid.uuid4().hex[:6]}"
+        ctx = SessionContext(
+            session_id=sid,
+            role=SessionRole.DEEP,
+            base_prompt=prompt,
+            context_documents=docs,
+            delivery_mode=DeliveryMode.PASSIVE,
+            effort=effort_level,
+            model=deep_model,
+        )
+        await store.save_session(
+            sid,
+            debate_id,
+            "deep",
+            prompt,
+            context_documents=docs,
+            delivery_mode="passive",
+            model=deep_model,
+            effort=effort,
+        )
+        _sessions[sid] = ctx
+        _debate_sessions[debate_id].append(sid)
+        _session_to_debate[sid] = debate_id
+        deep_sessions.append(ctx)
+
+    # ── 3. Create Fresh/Semi-Fresh sessions ─────────────────────────
+    fresh_sessions: list[SessionContext] = []
     prefix = "sf" if auto_role == SessionRole.SEMI_FRESH else "fresh"
-    auto_id = f"{debate_id}-{prefix}-{uuid.uuid4().hex[:6]}"
-    auto_ctx = SessionContext(
-        session_id=auto_id,
-        role=auto_role,
-        base_prompt=prompt,
-        context_documents=[],
-        delivery_mode=dm,
-    )
-    await store.save_session(
-        auto_id,
-        debate_id,
-        fresh_role,
-        prompt,
-        context_documents=auto_ctx.context_documents,
-        delivery_mode=auto_ctx.delivery_mode.value,
-        compressed_summary=auto_ctx.compressed_summary,
-        metadata=auto_ctx.metadata,
-    )
-
-    _sessions[auto_id] = auto_ctx
-    _debate_sessions[debate_id].append(auto_id)
-    _session_to_debate[auto_id] = debate_id
+    for i in range(fresh_n):
+        sid = f"{debate_id}-{prefix}-{i}-{uuid.uuid4().hex[:6]}"
+        ctx = SessionContext(
+            session_id=sid,
+            role=auto_role,
+            base_prompt=prompt,
+            context_documents=[],
+            delivery_mode=dm,
+            effort=effort_level,
+            model=fresh_model,
+        )
+        await store.save_session(
+            sid,
+            debate_id,
+            fresh_role,
+            prompt,
+            delivery_mode=dm.value,
+            model=fresh_model,
+            effort=effort,
+        )
+        _sessions[sid] = ctx
+        _debate_sessions[debate_id].append(sid)
+        _session_to_debate[sid] = debate_id
+        fresh_sessions.append(ctx)
 
     logger.info(
-        "Auto-debate %s: experienced=%s, %s=%s",
+        "Auto-debate %s: Deep(%d) x %s(%d), effort=%s, injection=%s",
         debate_id,
-        exp_id,
+        deep_n,
         fresh_role,
-        auto_id,
+        fresh_n,
+        effort,
+        injection_mode,
     )
+
     try:
-        # 3. Generate positions
+        # ── 4. POSITION phase ───────────────────────────────────────
         protocol.advance_phase()  # → POSITION
 
-        exp_pos = await generate_experienced_position(prompt, docs)
+        # Generate Deep positions (concurrent within group)
+        deep_tasks = [
+            generate_experienced_position(
+                deep_user_prompt,
+                context_documents=(None if injection_mode != "raw" or context_pct < 100 else docs),
+                effort=effort,
+                model=deep_model,
+            )
+            for _ in range(deep_n)
+        ]
+        deep_positions = await asyncio.gather(*deep_tasks)
 
+        # For Semi-Fresh: compress Deep positions, then generate
+        compressed = None
         if auto_role == SessionRole.SEMI_FRESH:
-            compressed = await compress_position(exp_pos)
-            auto_ctx.compressed_summary = compressed
-            await store.update_session_context(
-                auto_id,
-                context_documents=auto_ctx.context_documents,
-                delivery_mode=auto_ctx.delivery_mode.value,
-                compressed_summary=auto_ctx.compressed_summary,
-                metadata=auto_ctx.metadata,
-            )
-            auto_pos = await generate_semi_fresh_position(
-                prompt, compressed, delivery_mode=delivery_mode
-            )
-        else:
-            auto_pos = await generate_fresh_position(prompt)
+            deep_aggregate = _aggregate_positions(deep_positions, "Deep")
+            if delivery_mode == "selective":
+                compressed = await compress_failures_only(deep_aggregate, model=deep_model)
+            else:
+                compressed = await compress_position(deep_aggregate, model=deep_model)
+            for ctx in fresh_sessions:
+                ctx.compressed_summary = compressed
+                await store.update_session_context(
+                    ctx.session_id,
+                    compressed_summary=compressed,
+                )
 
-        for sid, content in [(exp_id, exp_pos), (auto_id, auto_pos)]:
+        # Generate Fresh/Semi-Fresh positions (concurrent)
+        fresh_tasks = []
+        for _ in range(fresh_n):
+            if auto_role == SessionRole.SEMI_FRESH and compressed:
+                fresh_tasks.append(
+                    generate_semi_fresh_position(
+                        fresh_prompt,
+                        compressed,
+                        delivery_mode=delivery_mode,
+                        effort=effort,
+                        model=fresh_model,
+                    )
+                )
+            else:
+                fresh_tasks.append(
+                    generate_fresh_position(fresh_prompt, effort=effort, model=fresh_model)
+                )
+        fresh_positions = await asyncio.gather(*fresh_tasks)
+
+        # Persist all positions
+        for ctx, pos in zip(deep_sessions, deep_positions):
             msg = DebateMessage(
-                session_id=sid,
+                session_id=ctx.session_id,
                 phase=DebatePhase.POSITION,
-                content=content,
+                content=pos,
                 timestamp=_now(),
             )
             protocol.submit_message(msg)
-            await store.save_message(debate_id, sid, "position", content)
+            await store.save_message(debate_id, ctx.session_id, "position", pos)
 
-        # HITL checkpoint: pause before challenge phase
+        for ctx, pos in zip(fresh_sessions, fresh_positions):
+            msg = DebateMessage(
+                session_id=ctx.session_id,
+                phase=DebatePhase.POSITION,
+                content=pos,
+                timestamp=_now(),
+            )
+            protocol.submit_message(msg)
+            await store.save_message(debate_id, ctx.session_id, "position", pos)
+
+        # ── HITL: pause before challenge ────────────────────────────
         if pause_at == "challenge":
             paused_ctx = {
-                "exp_id": exp_id,
-                "auto_id": auto_id,
-                "exp_pos": exp_pos,
-                "auto_pos": auto_pos,
+                "deep_ids": [s.session_id for s in deep_sessions],
+                "fresh_ids": [s.session_id for s in fresh_sessions],
+                "deep_positions": list(deep_positions),
+                "fresh_positions": list(fresh_positions),
                 "fresh_role": fresh_role,
                 "delivery_mode": delivery_mode,
+                "effort": effort,
+                "deep_model": deep_model,
+                "fresh_model": fresh_model,
                 "paused_phase": "challenge",
                 "protocol_phase": protocol.phase.value,
             }
             _paused_debates[debate_id] = paused_ctx
             await store.update_debate_status(debate_id, "paused")
             await store.save_paused_context(debate_id, paused_ctx)
-            logger.info("Auto-debate %s paused before challenge phase (HITL)", debate_id)
             return {
                 "debate_id": debate_id,
                 "phase": "paused",
                 "paused_before": "challenge",
                 "mode": "auto_hitl",
+                "config": config,
                 "positions": {
-                    "experienced": exp_pos[:500],
-                    "auto": auto_pos[:500],
+                    "deep": [p[:500] for p in deep_positions],
+                    "fresh": [p[:500] for p in fresh_positions],
                 },
                 "message": "Debate paused for human review. Use debate_review to continue.",
             }
 
+        # ── 5. CHALLENGE phase ──────────────────────────────────────
         protocol.advance_phase()  # → CHALLENGE
 
-        exp_challenge = await generate_challenge(
-            own_position=exp_pos,
-            other_position=auto_pos,
-            own_role="experienced",
-            other_role=fresh_role,
-        )
-        auto_challenge = await generate_challenge(
-            own_position=auto_pos,
-            other_position=exp_pos,
-            own_role=fresh_role,
-            other_role="experienced",
+        deep_aggregate = _aggregate_positions(deep_positions, "Deep")
+        fresh_aggregate = _aggregate_positions(
+            fresh_positions, fresh_role.replace("_", "-").title()
         )
 
-        for sid, content in [(exp_id, exp_challenge), (auto_id, auto_challenge)]:
+        # Deep challenges Fresh
+        deep_challenge = await generate_challenge(
+            own_position=deep_aggregate,
+            other_position=fresh_aggregate,
+            own_role="deep",
+            other_role=fresh_role,
+            effort=effort,
+            model=deep_model,
+        )
+        # Fresh challenges Deep
+        fresh_challenge = await generate_challenge(
+            own_position=fresh_aggregate,
+            other_position=deep_aggregate,
+            own_role=fresh_role,
+            other_role="deep",
+            effort=effort,
+            model=fresh_model,
+        )
+
+        # Record challenge for all sessions in each group.
+        # The challenge text is generated from aggregated positions, so all
+        # sessions in the same group share the same challenge content.
+        deep_action = _parse_dominant_action(deep_challenge)
+        fresh_action = _parse_dominant_action(fresh_challenge)
+
+        for ctx in deep_sessions:
             ch_msg = DebateMessage(
-                session_id=sid,
+                session_id=ctx.session_id,
                 phase=DebatePhase.CHALLENGE,
-                content=content,
+                content=deep_challenge,
                 timestamp=_now(),
-                action=SemanticAction.CHALLENGE,
+                action=deep_action,
             )
             protocol.submit_message(ch_msg)
-            await store.save_message(debate_id, sid, "challenge", content, "challenge")
+            await store.save_message(
+                debate_id,
+                ctx.session_id,
+                "challenge",
+                deep_challenge,
+                deep_action.value,
+            )
 
-        # HITL checkpoint: pause before convergence phase
+        for ctx in fresh_sessions:
+            ch_msg = DebateMessage(
+                session_id=ctx.session_id,
+                phase=DebatePhase.CHALLENGE,
+                content=fresh_challenge,
+                timestamp=_now(),
+                action=fresh_action,
+            )
+            protocol.submit_message(ch_msg)
+            await store.save_message(
+                debate_id,
+                ctx.session_id,
+                "challenge",
+                fresh_challenge,
+                fresh_action.value,
+            )
+
+        # ── HITL: pause before convergence ──────────────────────────
         if pause_at == "convergence":
             paused_ctx = {
-                "exp_id": exp_id,
-                "auto_id": auto_id,
-                "exp_pos": exp_pos,
-                "auto_pos": auto_pos,
-                "exp_challenge": exp_challenge,
-                "auto_challenge": auto_challenge,
+                "deep_ids": [s.session_id for s in deep_sessions],
+                "fresh_ids": [s.session_id for s in fresh_sessions],
+                "deep_positions": list(deep_positions),
+                "fresh_positions": list(fresh_positions),
+                "deep_challenge": deep_challenge,
+                "fresh_challenge": fresh_challenge,
                 "fresh_role": fresh_role,
                 "delivery_mode": delivery_mode,
+                "effort": effort,
+                "deep_model": deep_model,
+                "fresh_model": fresh_model,
                 "paused_phase": "convergence",
                 "protocol_phase": protocol.phase.value,
             }
             _paused_debates[debate_id] = paused_ctx
             await store.update_debate_status(debate_id, "paused")
             await store.save_paused_context(debate_id, paused_ctx)
-            logger.info("Auto-debate %s paused before convergence (HITL)", debate_id)
             return {
                 "debate_id": debate_id,
                 "phase": "paused",
                 "paused_before": "convergence",
                 "mode": "auto_hitl",
+                "config": config,
                 "challenges": {
-                    "experienced": exp_challenge[:500],
-                    "auto": auto_challenge[:500],
+                    "deep": deep_challenge[:500],
+                    "fresh": fresh_challenge[:500],
                 },
                 "message": "Debate paused for human review. Use debate_review to continue.",
             }
 
+        # ── 6. CONVERGENCE phase ────────────────────────────────────
         protocol.advance_phase()  # → CONVERGENCE
 
         engine = ConvergenceEngine(use_llm=_USE_LLM_CONVERGENCE)
-        session_roles = {
-            exp_id: "Experienced",
-            auto_id: fresh_role.replace("_", "-").title(),
-        }
+        session_roles = {}
+        for ctx in deep_sessions:
+            session_roles[ctx.session_id] = "Deep"
+        for ctx in fresh_sessions:
+            session_roles[ctx.session_id] = fresh_role.replace("_", "-").title()
         result = await engine.analyze(protocol, session_roles)
 
         protocol.advance_phase()  # → COMPLETE
@@ -1116,12 +1339,17 @@ async def debate_auto(
                     "session_a_view": p.session_a_view,
                     "session_b_view": p.session_b_view,
                     "resolution": p.resolution,
+                    "root_cause": p.root_cause,
                 }
                 for p in result.points
             ]
         )
         await store.save_convergence_and_complete(
-            debate_id, result.synthesis, result.confidence, points_json
+            debate_id,
+            result.synthesis,
+            result.confidence,
+            points_json,
+            meta_analysis=result.meta_analysis,
         )
         _cleanup_debate(debate_id)
     except Exception:
@@ -1129,17 +1357,17 @@ async def debate_auto(
         raise
 
     logger.info(
-        "Auto-debate %s complete (confidence=%.2f)",
+        "Auto-debate %s complete (confidence=%.2f, ploidy=%dn)",
         debate_id,
         result.confidence,
+        deep_n,
     )
 
     return {
         "debate_id": debate_id,
         "phase": "complete",
         "mode": "auto",
-        "fresh_role": fresh_role,
-        "delivery_mode": delivery_mode,
+        "config": config,
         "synthesis": result.synthesis,
         "confidence": result.confidence,
         "meta_analysis": result.meta_analysis,
@@ -1148,6 +1376,7 @@ async def debate_auto(
                 "category": p.category,
                 "summary": p.summary,
                 "resolution": p.resolution,
+                "root_cause": p.root_cause,
             }
             for p in result.points
         ],
@@ -1218,28 +1447,30 @@ async def debate_review(
     except ImportError:
         raise PloidyError("API client not available. Install with: pip install ploidy[api]")
 
-    exp_id = ctx["exp_id"]
-    auto_id = ctx["auto_id"]
+    # Support both old (exp_id/auto_id) and new (deep_ids/fresh_ids) paused context
+    deep_ids = ctx.get("deep_ids", [ctx["exp_id"]] if "exp_id" in ctx else [])
+    fresh_ids = ctx.get("fresh_ids", [ctx["auto_id"]] if "auto_id" in ctx else [])
+    deep_id = deep_ids[0] if deep_ids else None
+    auto_id = fresh_ids[0] if fresh_ids else None
     fresh_role = ctx["fresh_role"]
 
     await store.update_debate_status(debate_id, "active")
 
     if ctx["paused_phase"] == "challenge":
         # Resume from after positions, before challenges
-        exp_pos = ctx["exp_pos"]
-        auto_pos = ctx["auto_pos"]
+        deep_positions = ctx.get("deep_positions", [ctx.get("exp_pos", "")])
+        fresh_positions = ctx.get("fresh_positions", [ctx.get("auto_pos", "")])
+        deep_pos = _aggregate_positions(deep_positions, "Deep")
+        auto_pos = _aggregate_positions(fresh_positions, fresh_role.replace("_", "-").title())
 
-        if action == "override" and override_content:
-            # Human overrides the auto position
+        if action == "override" and override_content and auto_id:
             auto_pos = override_content
-            # Update the stored message
             msg = DebateMessage(
                 session_id=auto_id,
                 phase=DebatePhase.POSITION,
                 content=auto_pos,
                 timestamp=_now(),
             )
-            # Replace last auto position in protocol
             protocol.messages = [
                 m
                 for m in protocol.messages
@@ -1250,58 +1481,71 @@ async def debate_review(
 
         protocol.advance_phase()  # → CHALLENGE
 
-        exp_challenge = await generate_challenge(
-            own_position=exp_pos,
+        effort = ctx.get("effort", "high")
+        d_model = ctx.get("deep_model")
+        f_model = ctx.get("fresh_model")
+
+        deep_challenge = await generate_challenge(
+            own_position=deep_pos,
             other_position=auto_pos,
-            own_role="experienced",
+            own_role="deep",
             other_role=fresh_role,
+            effort=effort,
+            model=d_model,
         )
         auto_challenge = await generate_challenge(
             own_position=auto_pos,
-            other_position=exp_pos,
+            other_position=deep_pos,
             own_role=fresh_role,
-            other_role="experienced",
+            other_role="deep",
+            effort=effort,
+            model=f_model,
         )
 
-        for sid, content in [(exp_id, exp_challenge), (auto_id, auto_challenge)]:
+        for sid, content in [(deep_id, deep_challenge), (auto_id, auto_challenge)]:
+            if sid is None:
+                continue
+            ch_action = _parse_dominant_action(content)
             ch_msg = DebateMessage(
                 session_id=sid,
                 phase=DebatePhase.CHALLENGE,
                 content=content,
                 timestamp=_now(),
-                action=SemanticAction.CHALLENGE,
+                action=ch_action,
             )
             protocol.submit_message(ch_msg)
-            await store.save_message(debate_id, sid, "challenge", content, "challenge")
+            await store.save_message(debate_id, sid, "challenge", content, ch_action.value)
 
     elif ctx["paused_phase"] == "convergence":
-        # Resume from after challenges, before convergence
-        if action == "override" and override_content:
-            # Human overrides the auto challenge
+        if action == "override" and override_content and auto_id:
             auto_challenge = override_content
             protocol.messages = [
                 m
                 for m in protocol.messages
                 if not (m.session_id == auto_id and m.phase == DebatePhase.CHALLENGE)
             ]
+            ch_action = _parse_dominant_action(auto_challenge)
             ch_msg = DebateMessage(
                 session_id=auto_id,
                 phase=DebatePhase.CHALLENGE,
                 content=auto_challenge,
                 timestamp=_now(),
-                action=SemanticAction.CHALLENGE,
+                action=ch_action,
             )
             protocol.submit_message(ch_msg)
-            await store.save_message(debate_id, auto_id, "challenge", auto_challenge, "challenge")
+            await store.save_message(
+                debate_id, auto_id, "challenge", auto_challenge, ch_action.value
+            )
 
     # Continue to convergence + complete
     protocol.advance_phase()  # → CONVERGENCE
 
     engine = ConvergenceEngine(use_llm=_USE_LLM_CONVERGENCE)
-    session_roles = {
-        exp_id: "Experienced",
-        auto_id: fresh_role.replace("_", "-").title(),
-    }
+    session_roles = {}
+    for sid in deep_ids:
+        session_roles[sid] = "Deep"
+    for sid in fresh_ids:
+        session_roles[sid] = fresh_role.replace("_", "-").title()
     result = await engine.analyze(protocol, session_roles)
 
     protocol.advance_phase()  # → COMPLETE
@@ -1314,12 +1558,17 @@ async def debate_review(
                 "session_a_view": p.session_a_view,
                 "session_b_view": p.session_b_view,
                 "resolution": p.resolution,
+                "root_cause": p.root_cause,
             }
             for p in result.points
         ]
     )
     await store.save_convergence_and_complete(
-        debate_id, result.synthesis, result.confidence, points_json
+        debate_id,
+        result.synthesis,
+        result.confidence,
+        points_json,
+        meta_analysis=result.meta_analysis,
     )
     _cleanup_debate(debate_id)
 
@@ -1343,6 +1592,7 @@ async def debate_review(
                 "category": p.category,
                 "summary": p.summary,
                 "resolution": p.resolution,
+                "root_cause": p.root_cause,
             }
             for p in result.points
         ],

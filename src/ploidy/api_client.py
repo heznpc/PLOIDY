@@ -25,6 +25,8 @@ logger = logging.getLogger("ploidy.api")
 
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 1.0
+_PER_CALL_TIMEOUT = 60.0  # seconds per individual API call
+_CLIENT_TIMEOUT = 120.0  # seconds for client-level HTTP timeout
 
 
 # ---------------------------------------------------------------------------
@@ -41,8 +43,15 @@ def is_api_available() -> bool:
     return _API_BASE_URL is not None and _API_BASE_URL != ""
 
 
+_cached_client = None
+
+
 async def _get_client():
-    """Lazily create an AsyncOpenAI client."""
+    """Lazily create and cache an AsyncOpenAI client."""
+    global _cached_client
+    if _cached_client is not None:
+        return _cached_client
+
     try:
         from openai import AsyncOpenAI
     except ImportError:
@@ -50,10 +59,11 @@ async def _get_client():
             "openai package required for v0.2 API fallback. Install with: pip install ploidy[api]"
         )
 
-    kwargs = {"api_key": _API_KEY or "not-needed", "timeout": 120.0}
+    kwargs = {"api_key": _API_KEY or "not-needed", "timeout": _CLIENT_TIMEOUT}
     if _API_BASE_URL:
         kwargs["base_url"] = _API_BASE_URL
-    return AsyncOpenAI(**kwargs)
+    _cached_client = AsyncOpenAI(**kwargs)
+    return _cached_client
 
 
 async def generate_response(
@@ -89,21 +99,25 @@ async def generate_response(
     effort_tokens = {"low": 1024, "medium": 2048, "high": 4096, "max": 8192}
     effective_max_tokens = effort_tokens.get(effort, max_tokens)
 
+    retryable_names = ("RateLimitError", "APITimeoutError", "APIConnectionError")
+
     last_error: Exception | None = None
     for attempt in range(_MAX_RETRIES):
         try:
-            response = await client.chat.completions.create(
-                model=model or _API_MODEL,
-                messages=messages,
-                max_tokens=effective_max_tokens,
+            response = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model or _API_MODEL,
+                    messages=messages,
+                    max_tokens=effective_max_tokens,
+                ),
+                timeout=_PER_CALL_TIMEOUT,
             )
         except (IndexError, KeyError, AttributeError) as e:
             raise RuntimeError(f"Ploidy API returned malformed response: {e}") from e
         except Exception as e:
+            is_retryable = isinstance(e, TimeoutError) or type(e).__name__ in retryable_names
             last_error = e
-            # Import error types available at runtime
-            retryable = ("RateLimitError", "APITimeoutError", "APIConnectionError")
-            if type(e).__name__ in retryable and attempt < _MAX_RETRIES - 1:
+            if is_retryable and attempt < _MAX_RETRIES - 1:
                 delay = _RETRY_BASE_DELAY * (2**attempt)
                 logger.warning(
                     "API call failed (attempt %d/%d, retrying in %.1fs): %s",
@@ -116,13 +130,12 @@ async def generate_response(
                 continue
             logger.error("API call failed: %s (%s)", e, type(e).__name__)
             raise RuntimeError(f"Ploidy API call failed: {e}") from e
-
-        # Extract response content -- guard against empty/malformed choices
-        try:
-            content = response.choices[0].message.content or ""
-        except (IndexError, KeyError, AttributeError) as e:
-            raise RuntimeError(f"Ploidy API returned empty or malformed choices: {e}") from e
-        return content
+        else:
+            try:
+                content = response.choices[0].message.content or ""
+            except (IndexError, KeyError, AttributeError) as e:
+                raise RuntimeError(f"Ploidy API returned empty or malformed choices: {e}") from e
+            return content
     raise RuntimeError(f"Ploidy API call failed after {_MAX_RETRIES} retries: {last_error}")
 
 
@@ -217,6 +230,15 @@ async def generate_semi_fresh_position(
             f"List every bug, risk, or issue you can find. Be specific and technical.\n"
             f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
         )
+    elif delivery_mode == "selective":
+        prompt = (
+            f"A previous reviewer flagged these areas of uncertainty:\n\n"
+            f"--- AREAS OF UNCERTAINTY ---\n{compressed_summary}\n--- END ---\n\n"
+            f"Use this as a starting point, but perform your own comprehensive review:\n\n"
+            f"{debate_prompt}\n\n"
+            f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+            f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+        )
     else:  # active
         prompt = (
             f"{debate_prompt}\n\n"
@@ -298,6 +320,34 @@ async def compress_position(position: str, model: str | None = None) -> str:
             f"- Constraints mentioned\n\n"
             f"Do NOT include the full reasoning or project narrative. Max 300 words.\n\n"
             f"Analysis to compress:\n{position}"
+        ),
+        model=model,
+    )
+
+
+async def compress_failures_only(position: str, model: str | None = None) -> str:
+    """Extract only failure/uncertainty information from a Deep position.
+
+    Used for the SF-Selective delivery mode, where the Semi-Fresh session
+    receives only what the Deep session was uncertain about -- excluding
+    confident findings.
+
+    Args:
+        position: The full position text to extract failures from.
+        model: Optional model override.
+
+    Returns:
+        A failure-only digest (max ~200 words).
+    """
+    return await generate_response(
+        prompt=(
+            f"From the following analysis, extract ONLY:\n"
+            f"- Issues that were flagged as uncertain or low-confidence\n"
+            f"- Risks or concerns that were noted but not fully resolved\n"
+            f"- Limitations or gaps acknowledged by the reviewer\n\n"
+            f"Do NOT include issues the reviewer was confident about.\n"
+            f"Do NOT include the project context or background. Max 200 words.\n\n"
+            f"Analysis:\n{position}"
         ),
         model=model,
     )

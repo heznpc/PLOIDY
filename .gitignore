@@ -60,6 +60,8 @@ diploid-paper-outline.md
 
 # Experiment scripts (local only)
 experiments/resume_all.sh
+experiments/skills_fresh_design.py
+experiments/EXPERIMENT_SPEC_UNIFIED.md
 
 # Experiment results (large, local only)
 experiments/results/
@@ -67,12 +69,14 @@ experiments/logs/
 experiments/phase*.log
 
 # LaTeX build artifacts
-paper/latex/*.aux
-paper/latex/*.bbl
-paper/latex/*.blg
-paper/latex/*.log
-paper/latex/*.out
-paper/latex/*.pdf
-paper/latex/missfont.log
-paper/latex/colm_template.tar.gz
-paper/latex/Template-2026/
+paper/**/*.aux
+paper/**/*.bbl
+paper/**/*.blg
+paper/**/*.log
+paper/**/*.out
+paper/**/*.pdf
+paper/**/*.fls
+paper/**/*.fdb_latexmk
+paper/**/*.synctex.gz
+paper/**/missfont.log
+paper/shared/Template-2026/colm_template.tar.gz

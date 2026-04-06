@@ -1,0 +1,47 @@
+name: Build Paper PDFs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'paper/**/*.tex'
+      - 'paper/**/*.bib'
+      - 'paper/**/*.sty'
+      - 'paper/**/*.bst'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'paper/**/*.tex'
+      - 'paper/**/*.bib'
+      - 'paper/**/*.sty'
+      - 'paper/**/*.bst'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build colm_submission.pdf
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: colm_submission.tex
+          working_directory: paper/paper-2-mechanism
+
+      - name: Build main.pdf
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: main.tex
+          working_directory: paper/paper-2-mechanism
+
+      - name: Upload PDFs
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-pdfs
+          path: |
+            paper/paper-2-mechanism/colm_submission.pdf
+            paper/paper-2-mechanism/main.pdf
+          retention-days: 30

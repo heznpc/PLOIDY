@@ -494,14 +494,7 @@ def call_llm_multi_turn(turns: list[dict], model: str = None, effort: str = None
 # ─── Tasks ───────────────────────────────────────────────────────────────────
 
 
-@dataclass
-class Task:
-    id: str
-    name: str
-    context: str
-    prompt: str
-    ground_truth: list[str]
-    domain: str
+from task_model import Task
 
 
 TASKS: list[Task] = [
@@ -1315,6 +1308,320 @@ def judge_result(task: Task, method_name: str, output: str) -> dict:
         return {"raw_judgment": judgment, "parse_error": True}
 
 
+# ─── Tool-Fresh Infrastructure ────────────────────────────────────────────────
+
+
+def _extract_code_blocks(prompt: str) -> list[str]:
+    """Extract fenced code blocks from a task prompt."""
+    import re
+
+    return re.findall(r"```(?:python)?\s*\n(.*?)```", prompt, re.DOTALL)
+
+
+def _run_tool_analysis(code: str) -> dict:
+    """Run ruff, mypy, bandit on a code string. Returns normalized findings.
+
+    Args:
+        code: Python source code string.
+
+    Returns:
+        Dict with findings list, tools_run, tool_time_seconds.
+    """
+    import os
+    import re
+    import tempfile
+
+    findings = []
+    tools_run = []
+    t0 = time.time()
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", delete=False, prefix="ploidy_tool_"
+    ) as f:
+        f.write(code)
+        tmp_path = f.name
+
+    try:
+        # ruff
+        try:
+            result = subprocess.run(
+                ["ruff", "check", "--select", "ALL", "--output-format", "json", tmp_path],
+                capture_output=True, text=True, timeout=30,
+            )
+            tools_run.append("ruff")
+            if result.stdout.strip() and result.stdout.strip() != "[]":
+                for item in json.loads(result.stdout):
+                    findings.append(
+                        f"[ruff {item.get('code', '')}] line {item.get('location', {}).get('row', 0)}: "
+                        f"{item.get('message', '')}"
+                    )
+        except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+            pass
+
+        # mypy
+        try:
+            result = subprocess.run(
+                ["mypy", "--no-color-output", "--no-error-summary", tmp_path],
+                capture_output=True, text=True, timeout=60,
+            )
+            tools_run.append("mypy")
+            for line in result.stdout.strip().splitlines():
+                m = re.match(r".+?:(\d+):\s*(error|warning|note):\s*(.+)", line)
+                if m and m.group(2) in ("error", "warning"):
+                    findings.append(f"[mypy {m.group(2)}] line {m.group(1)}: {m.group(3)}")
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        # bandit
+        try:
+            result = subprocess.run(
+                ["bandit", "-f", "json", "-ll", tmp_path],
+                capture_output=True, text=True, timeout=30,
+            )
+            tools_run.append("bandit")
+            if result.stdout.strip():
+                data = json.loads(result.stdout)
+                for item in data.get("results", []):
+                    findings.append(
+                        f"[bandit {item.get('test_id', '')}] line {item.get('line_number', 0)}: "
+                        f"{item.get('issue_text', '')} "
+                        f"(severity: {item.get('issue_severity', '')}, "
+                        f"confidence: {item.get('issue_confidence', '')})"
+                    )
+        except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+            pass
+    finally:
+        os.unlink(tmp_path)
+
+    return {
+        "findings": findings,
+        "tools_run": tools_run,
+        "tool_time_seconds": round(time.time() - t0, 2),
+    }
+
+
+def _format_tool_position(tool_result: dict) -> str:
+    """Format tool findings as a text block for convergence."""
+    if not tool_result["findings"]:
+        return (
+            f"=== Tool-Fresh Analysis ({', '.join(tool_result['tools_run'])}) ===\n"
+            "No issues found by static analysis tools.\n"
+            "Note: tools only detect structural/syntactic issues, not architectural or design problems."
+        )
+    lines = [f"=== Tool-Fresh Analysis ({', '.join(tool_result['tools_run'])}) ==="]
+    for i, f in enumerate(tool_result["findings"], 1):
+        lines.append(f"{i}. {f}")
+    lines.append(
+        f"\nSummary: {len(tool_result['findings'])} issues found. "
+        "No project context was used. Analysis is purely structural."
+    )
+    return "\n".join(lines)
+
+
+def method_tool_fresh(task: Task) -> str:
+    """Tool-Fresh: Deep(LLM) + Fresh(deterministic tools).
+
+    The Fresh perspective comes from static analysis (ruff, mypy, bandit).
+    Zero LLM tokens for the Fresh side. Only works on tasks with code.
+    """
+    code_blocks = _extract_code_blocks(task.prompt)
+    if not code_blocks:
+        return "SKIP: no code block in task prompt"
+
+    sys_prompt = get_system_prompt_for_mode(task.context)
+    deep_pos = call_llm(
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+        system_prompt=sys_prompt,
+    )
+
+    all_findings = []
+    all_tools = []
+    total_time = 0.0
+    for code in code_blocks:
+        result = _run_tool_analysis(code)
+        all_findings.extend(result["findings"])
+        all_tools.extend(result["tools_run"])
+        total_time += result["tool_time_seconds"]
+
+    tool_result = {"findings": all_findings, "tools_run": list(set(all_tools)), "tool_time_seconds": total_time}
+    tool_pos = _format_tool_position(tool_result)
+
+    convergence = call_llm(
+        f"Two reviewers analyzed this code:\n\n"
+        f"=== Deep Session (LLM with full project context) ===\n{deep_pos}\n\n"
+        f"{tool_pos}\n\n"
+        f"Synthesize a final list of ALL confirmed issues. For each:\n"
+        f"1. The issue\n"
+        f"2. Who found it (Deep, Tool-Fresh, or Both)\n"
+        f"3. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
+    )
+
+    return (
+        f"=== Deep Position ===\n{deep_pos}\n\n"
+        f"{tool_pos}\n\n"
+        f"=== Tool Metadata: {tool_result['tools_run']}, "
+        f"{len(tool_result['findings'])} findings, {tool_result['tool_time_seconds']:.1f}s ===\n\n"
+        f"=== Convergence ===\n{convergence}"
+    )
+
+
+def method_tool_llm_informed(task: Task) -> str:
+    """Tool+LLM Informed: Deep + Tools → LLM-Fresh (sequential).
+
+    Tool runs first, LLM-Fresh sees tool findings and is told to focus elsewhere.
+    Tests whether tool results anchor the LLM (reduce recall on tool-blind areas).
+    """
+    code_blocks = _extract_code_blocks(task.prompt)
+    if not code_blocks:
+        return "SKIP: no code block in task prompt"
+
+    sys_prompt = get_system_prompt_for_mode(task.context)
+    deep_pos = call_llm(
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+        system_prompt=sys_prompt,
+    )
+
+    all_findings = []
+    all_tools = []
+    total_time = 0.0
+    for code in code_blocks:
+        result = _run_tool_analysis(code)
+        all_findings.extend(result["findings"])
+        all_tools.extend(result["tools_run"])
+        total_time += result["tool_time_seconds"]
+
+    tool_findings_str = "\n".join(f"- {f}" for f in all_findings) if all_findings else "(no tool findings)"
+
+    # LLM-Fresh sees tool output → potential anchoring
+    llm_fresh_pos = call_llm(
+        f"{task.prompt}\n\n"
+        f"You have NO background context about this system.\n\n"
+        f"An automated static analysis tool found:\n"
+        f"--- TOOL FINDINGS ---\n{tool_findings_str}\n--- END ---\n\n"
+        f"Focus on architectural, logical, and contextual issues tools cannot detect.\n"
+        f"Do NOT repeat what the tool already found. Add NEW issues only.\n"
+        f"List every bug, risk, or issue. Be specific. Classify confidence as HIGH/MEDIUM/LOW."
+    )
+
+    fresh_combined = f"--- Tool-Fresh ---\n{tool_findings_str}\n\n--- LLM-Fresh (tool-informed) ---\n{llm_fresh_pos}"
+
+    deep_challenge = call_llm(
+        f"You are an experienced reviewer with full project context. You found:\n{deep_pos}\n\n"
+        f"Fresh analysis (tools + LLM) found:\n{fresh_combined}\n\n"
+        f"For EACH point: AGREE / CHALLENGE (wrong given context) / SYNTHESIZE.\n"
+        f"Also list what they missed."
+    )
+    fresh_challenge = call_llm(
+        f"You are a fresh reviewer with NO project context.\n"
+        f"Your side found:\n{fresh_combined}\n\n"
+        f"Deep reviewer found:\n{deep_pos}\n\n"
+        f"For EACH point: AGREE / CHALLENGE (seems like rationalization) / SYNTHESIZE.\n"
+        f"Also list what they missed."
+    )
+
+    convergence = call_llm(
+        f"A debate between Deep, Tool-Fresh, and LLM-Fresh (tool-informed) was held.\n\n"
+        f"=== Deep Position ===\n{deep_pos}\n\n"
+        f"=== Tool-Fresh ===\n{tool_findings_str}\n\n"
+        f"=== LLM-Fresh (tool-informed) ===\n{llm_fresh_pos}\n\n"
+        f"=== Deep challenges Fresh ===\n{deep_challenge}\n\n"
+        f"=== Fresh challenges Deep ===\n{fresh_challenge}\n\n"
+        f"Produce a final list of ALL confirmed issues. For each:\n"
+        f"1. The issue\n"
+        f"2. Source: (Tool), (LLM-Fresh), (Deep), or combinations\n"
+        f"3. Whether agreed, contested, or synthesized\n"
+        f"4. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
+    )
+
+    return (
+        f"=== Deep ===\n{deep_pos}\n\n"
+        f"=== Tool ({len(all_findings)} findings, {total_time:.1f}s) ===\n{tool_findings_str}\n\n"
+        f"=== LLM-Fresh (informed) ===\n{llm_fresh_pos}\n\n"
+        f"=== Challenges ===\n{deep_challenge}\n---\n{fresh_challenge}\n\n"
+        f"=== Convergence ===\n{convergence}"
+    )
+
+
+def method_tool_llm_parallel(task: Task) -> str:
+    """Tool+LLM Parallel: Deep + Tools ∥ LLM-Fresh (independent).
+
+    Tool and LLM-Fresh run independently — LLM never sees tool results.
+    Avoids anchoring. Tests complementarity without contamination.
+    """
+    code_blocks = _extract_code_blocks(task.prompt)
+    if not code_blocks:
+        return "SKIP: no code block in task prompt"
+
+    sys_prompt = get_system_prompt_for_mode(task.context)
+    deep_pos = call_llm(
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
+        system_prompt=sys_prompt,
+    )
+
+    # LLM-Fresh: completely independent, no tool results
+    llm_fresh_pos = call_llm(
+        f"{task.prompt}\n\n"
+        f"You have NO background context about this system. "
+        f"Review based purely on the code/question itself.\n"
+        f"List every bug, risk, or issue. Be specific. Classify confidence as HIGH/MEDIUM/LOW."
+    )
+
+    all_findings = []
+    all_tools = []
+    total_time = 0.0
+    for code in code_blocks:
+        result = _run_tool_analysis(code)
+        all_findings.extend(result["findings"])
+        all_tools.extend(result["tools_run"])
+        total_time += result["tool_time_seconds"]
+
+    tool_findings_str = "\n".join(f"- {f}" for f in all_findings) if all_findings else "(no tool findings)"
+
+    fresh_combined = f"--- Tool-Fresh ---\n{tool_findings_str}\n\n--- LLM-Fresh (independent) ---\n{llm_fresh_pos}"
+
+    deep_challenge = call_llm(
+        f"You are an experienced reviewer with full project context. You found:\n{deep_pos}\n\n"
+        f"Fresh analysis (tools + independent LLM) found:\n{fresh_combined}\n\n"
+        f"For EACH point: AGREE / CHALLENGE (wrong given context) / SYNTHESIZE.\n"
+        f"Also list what they missed."
+    )
+    fresh_challenge = call_llm(
+        f"You are a fresh reviewer with NO project context.\n"
+        f"Your side found:\n{fresh_combined}\n\n"
+        f"Deep reviewer found:\n{deep_pos}\n\n"
+        f"For EACH point: AGREE / CHALLENGE (seems like rationalization) / SYNTHESIZE.\n"
+        f"Also list what they missed."
+    )
+
+    convergence = call_llm(
+        f"A debate between Deep, Tool-Fresh, and LLM-Fresh (independent) was held.\n\n"
+        f"=== Deep Position ===\n{deep_pos}\n\n"
+        f"=== Tool-Fresh ===\n{tool_findings_str}\n\n"
+        f"=== LLM-Fresh (independent) ===\n{llm_fresh_pos}\n\n"
+        f"=== Deep challenges Fresh ===\n{deep_challenge}\n\n"
+        f"=== Fresh challenges Deep ===\n{fresh_challenge}\n\n"
+        f"Produce a final list of ALL confirmed issues. For each:\n"
+        f"1. The issue\n"
+        f"2. Source: (Tool), (LLM-Fresh), (Deep), or combinations\n"
+        f"3. Whether agreed, contested, or synthesized\n"
+        f"4. Final severity (CRITICAL / HIGH / MEDIUM / LOW)"
+    )
+
+    return (
+        f"=== Deep ===\n{deep_pos}\n\n"
+        f"=== Tool ({len(all_findings)} findings, {total_time:.1f}s) ===\n{tool_findings_str}\n\n"
+        f"=== LLM-Fresh (independent) ===\n{llm_fresh_pos}\n\n"
+        f"=== Challenges ===\n{deep_challenge}\n---\n{fresh_challenge}\n\n"
+        f"=== Convergence ===\n{convergence}"
+    )
+
+
 # ─── Runner ──────────────────────────────────────────────────────────────────
 
 METHODS = {
@@ -1331,6 +1638,9 @@ METHODS = {
     "sf_selective": ("Semi-Fresh (Selective)", method_semi_fresh_selective),
     "sf_passive_indep": ("SF-Passive+Independent", method_semi_fresh_passive_independent),
     "sf_passive_bottom": ("SF-Passive+Bottom", method_semi_fresh_passive_bottom),
+    "tool_fresh": ("Tool-Fresh (Deep+Tools)", method_tool_fresh),
+    "tool_llm_informed": ("Tool+LLM Informed (sequential)", method_tool_llm_informed),
+    "tool_llm_parallel": ("Tool+LLM Parallel (independent)", method_tool_llm_parallel),
 }
 
 

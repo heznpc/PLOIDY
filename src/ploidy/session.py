@@ -1,9 +1,9 @@
 """Session management for Ploidy debates.
 
 Defines the data structures for debate sessions:
-- Session roles (experienced, semi-fresh, fresh)
+- Session roles (deep, semi-fresh, fresh)
 - Session context (what each session knows)
-- Context delivery modes (passive, active)
+- Context delivery modes (passive, active, selective)
 
 Two independent phenomena motivate multi-session debate:
 
@@ -19,7 +19,7 @@ Two independent phenomena motivate multi-session debate:
    stochastic trajectory.
 
 These are independent events. A debate group may contain:
-- Deep(n) × Fresh(m): n experienced + m fresh sessions, addressing BOTH
+- Deep(n) × Fresh(m): n deep + m fresh sessions, addressing BOTH
   context asymmetry (Deep vs Fresh) and stochastic variance (n>1 or m>1
   samples from the same context depth)
 - Deep(1) × Fresh(1): minimal asymmetric debate (current default)
@@ -37,12 +37,12 @@ from enum import Enum
 class SessionRole(Enum):
     """Role of a session within a debate group.
 
-    EXPERIENCED: Full context -- project history, prior decisions, accumulated knowledge.
+    DEEP: Full context -- project history, prior decisions, accumulated knowledge.
     SEMI_FRESH: Compressed context -- structured digest of prior analysis, not full narrative.
     FRESH: Zero context -- just the decision prompt and essential background.
     """
 
-    EXPERIENCED = "experienced"
+    DEEP = "deep"
     SEMI_FRESH = "semi_fresh"
     FRESH = "fresh"
 
@@ -52,11 +52,13 @@ class DeliveryMode(Enum):
 
     PASSIVE: Context embedded directly in the prompt, always present in context window.
     ACTIVE: Context available via explicit retrieval, not present until requested.
+    SELECTIVE: Only failure/uncertainty information from prior analysis (not full summary).
     NONE: No context delivery (Fresh sessions).
     """
 
     PASSIVE = "passive"
     ACTIVE = "active"
+    SELECTIVE = "selective"
     NONE = "none"
 
 
@@ -79,12 +81,13 @@ class SessionContext:
 
     Attributes:
         session_id: Unique identifier for this session.
-        role: EXPERIENCED (full), SEMI_FRESH (compressed), or FRESH (zero context).
+        role: DEEP (full), SEMI_FRESH (compressed), or FRESH (zero context).
         base_prompt: The decision prompt shared by all sessions.
         context_documents: Additional context documents provided to this session.
-        delivery_mode: How context reaches this session (passive/active/none).
+        delivery_mode: How context reaches this session (passive/active/selective/none).
         effort: Effort level for LLM reasoning depth.
         compressed_summary: Compressed prior analysis (Semi-Fresh sessions only).
+        model: Model identifier for this session (None = use default).
     """
 
     session_id: str
@@ -94,4 +97,5 @@ class SessionContext:
     delivery_mode: DeliveryMode = DeliveryMode.NONE
     effort: EffortLevel = EffortLevel.HIGH
     compressed_summary: str | None = None
+    model: str | None = None
     metadata: dict = field(default_factory=dict)

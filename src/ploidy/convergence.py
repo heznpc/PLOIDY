@@ -121,17 +121,38 @@ class ConvergenceEngine:
         session_ids = sorted(positions.keys())
 
         points: list[ConvergencePoint] = []
+
+        # Track challenge pairs to detect irreducible disagreements:
+        # if both sides CHALLENGE each other on the same topic, it's irreducible.
+        challenge_by_session: dict[str, list] = {}
+        for ch in challenges:
+            challenge_by_session.setdefault(ch.session_id, []).append(ch)
+
         for ch in challenges:
             action = ch.action or SemanticAction.CHALLENGE
 
             if action in (SemanticAction.AGREE, SemanticAction.SYNTHESIZE):
                 category = "agreement"
+            elif action == SemanticAction.CHALLENGE:
+                # Check if the other side also challenged back (mutual challenge = irreducible)
+                other_ids = [s for s in session_ids if s != ch.session_id]
+                mutual = False
+                for oid in other_ids:
+                    for other_ch in challenge_by_session.get(oid, []):
+                        if (
+                            other_ch.action or SemanticAction.CHALLENGE
+                        ) == SemanticAction.CHALLENGE:
+                            mutual = True
+                            break
+                category = "irreducible" if mutual else "productive_disagreement"
             else:
                 category = "productive_disagreement"
 
             other_ids = [s for s in session_ids if s != ch.session_id]
             own_view = positions.get(ch.session_id, "")
-            other_view = positions.get(other_ids[0], "") if other_ids else ""
+            # Aggregate views from all other sessions for N-ary debates
+            other_views = [positions.get(oid, "") for oid in other_ids]
+            other_view = "\n---\n".join(v for v in other_views if v) if other_views else ""
 
             points.append(
                 ConvergencePoint(
@@ -140,6 +161,7 @@ class ConvergenceEngine:
                     session_a_view=own_view[:500],
                     session_b_view=other_view[:500],
                     resolution=(ch.content if action == SemanticAction.SYNTHESIZE else None),
+                    root_cause=None,
                 )
             )
 
@@ -149,7 +171,9 @@ class ConvergenceEngine:
                     category="irreducible",
                     summary="No challenges exchanged — positions stand as stated.",
                     session_a_view=positions.get(session_ids[0], "")[:500],
-                    session_b_view=positions.get(session_ids[1], "")[:500],
+                    session_b_view=(
+                        positions.get(session_ids[1], "")[:500] if len(session_ids) > 1 else ""
+                    ),
                     resolution=None,
                 )
             )
@@ -275,20 +299,31 @@ class ConvergenceEngine:
             parts.append(f"### {role} Session Position\n{pos}\n")
 
         agree = [p for p in points if p.category == "agreement"]
-        disagree = [p for p in points if p.category != "agreement"]
+        productive = [p for p in points if p.category == "productive_disagreement"]
+        irreducible = [p for p in points if p.category == "irreducible"]
 
         parts.append("### Analysis")
         parts.append(f"- {len(points)} point(s) analyzed")
-        parts.append(f"- {len(agree)} agreement(s), {len(disagree)} disagreement(s)")
+        parts.append(
+            f"- {len(agree)} agreement(s), {len(productive)} productive disagreement(s), "
+            f"{len(irreducible)} irreducible disagreement(s)"
+        )
 
         if agree:
             parts.append("\n### Agreements")
             for p in agree:
                 parts.append(f"- {p.summary}")
 
-        if disagree:
+        if productive:
             parts.append("\n### Productive Disagreements")
-            for p in disagree:
+            for p in productive:
+                parts.append(f"- {p.summary}")
+                if p.root_cause:
+                    parts.append(f"  Root cause: {p.root_cause}")
+
+        if irreducible:
+            parts.append("\n### Irreducible Disagreements")
+            for p in irreducible:
                 parts.append(f"- {p.summary}")
                 if p.root_cause:
                     parts.append(f"  Root cause: {p.root_cause}")
