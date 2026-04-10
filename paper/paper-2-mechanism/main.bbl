@@ -1,4 +1,4 @@
-\begin{thebibliography}{29}
+\begin{thebibliography}{37}
 \providecommand{\natexlab}[1]{#1}
 \providecommand{\url}[1]{\texttt{#1}}
 \expandafter\ifx\csname urlstyle\endcsname\relax
@@ -9,6 +9,18 @@
 {Anonymous}.
 \newblock When less is more: The {LLM} scaling paradox in context compression.
 \newblock \emph{arXiv preprint arXiv:2602.09789}, 2026.
+
+\bibitem[{Anthropic}(2026{\natexlab{a}})]{anthropic2026harnessing}
+{Anthropic}.
+\newblock Harnessing claude's intelligence.
+\newblock \url{https://claude.com/blog/harnessing-claudes-intelligence}, April
+  2026{\natexlab{a}}.
+
+\bibitem[{Anthropic}(2026{\natexlab{b}})]{anthropic2026managedagents}
+{Anthropic}.
+\newblock Claude managed agents: Get to production 10x faster.
+\newblock \url{https://claude.com/blog/claude-managed-agents}, April
+  2026{\natexlab{b}}.
 
 \bibitem[Azoulay et~al.(2019)Azoulay, Fons-Rosen, and Graff~Zivin]{azoulay2019}
 Pierre Azoulay, Christian Fons-Rosen, and Joshua~S. Graff~Zivin.
@@ -26,11 +38,24 @@ Ioannis Boca et~al.
 \newblock Emergent social conventions and collective bias in {LLM} populations.
 \newblock \emph{Science Advances}, 2025.
 
-\bibitem[Chen et~al.(2025)Chen, Niu, Cheng, Han, and Sugiyama]{chen2025colmad}
+\bibitem[Chen et~al.(2025{\natexlab{a}})Chen, Song, Ji, Gao, and
+  Zhu]{chen2025sid}
+Xuhang Chen, Zhifan Song, Deyi Ji, Shuo Gao, and Lanyun Zhu.
+\newblock {SID}: Multi-{LLM} debate driven by self signals.
+\newblock \emph{arXiv preprint arXiv:2510.06843}, 2025{\natexlab{a}}.
+
+\bibitem[Chen et~al.(2025{\natexlab{b}})Chen, Niu, Cheng, Han, and
+  Sugiyama]{chen2025colmad}
 Yongqiang Chen, Gang Niu, James Cheng, Bo~Han, and Masashi Sugiyama.
 \newblock Towards scalable oversight with collaborative multi-agent debate in
   error detection.
-\newblock \emph{arXiv preprint arXiv:2510.20963}, 2025.
+\newblock \emph{arXiv preprint arXiv:2510.20963}, 2025{\natexlab{b}}.
+
+\bibitem[Cheng et~al.(2026)Cheng, Zhu, Zhao, and
+  Arora]{cheng2026contextualdrag}
+Yun Cheng, Xingyu Zhu, Haoyu Zhao, and Sanjeev Arora.
+\newblock Contextual drag: How errors in the context affect {LLM} reasoning.
+\newblock \emph{arXiv preprint arXiv:2602.04288}, 2026.
 
 \bibitem[Choi et~al.(2025)Choi, Zhu, and Li]{choi2025debate}
 Yun-Da Choi, Haoran Zhu, and Jinhao Li.
@@ -78,6 +103,12 @@ Manish Jain, Sharon Park, Andre Viana, Christo Wilson, and Dan Calacci.
 \newblock Interaction context often increases sycophancy in {LLMs}.
 \newblock \emph{arXiv preprint arXiv:2509.12517}, 2025.
 
+\bibitem[Jeong et~al.(2026)Jeong, Choi, Kim, and Jang]{jeong2026toolmad}
+Seyeon Jeong, Yeonjun Choi, JongWook Kim, and Beakcheol Jang.
+\newblock {Tool-MAD}: A multi-agent debate framework for fact verification with
+  diverse tool augmentation and adaptive retrieval.
+\newblock \emph{arXiv preprint arXiv:2601.04742}, 2026.
+
 \bibitem[Kim et~al.(2025)]{srdcr2025}
 Jinheon Kim et~al.
 \newblock When to trust context: Self-reflective debates for contextual
@@ -89,6 +120,15 @@ Jinheon Kim et~al.
 Philippe Laban, Hideaki Hayashi, Yichen Zhou, and Jennifer Neville.
 \newblock {LLMs} get lost in multi-turn conversation.
 \newblock \emph{arXiv preprint arXiv:2505.06120}, 2025.
+
+\bibitem[Li et~al.(2026)Li, Zhang, Li, Duan, Gao, Chen, Qin, Li, Ji, Liu, Cui,
+  Chen, and Du]{li2026m3madbench}
+Ao~Li, Jinghui Zhang, Luyu Li, Yuxiang Duan, Lang Gao, Mingcai Chen, Weijun
+  Qin, Shaopeng Li, Fengxian Ji, Ning Liu, Lizhen Cui, Xiuying Chen, and Yuntao
+  Du.
+\newblock {M3MAD-Bench}: Are multi-agent debates really effective across
+  domains and modalities?
+\newblock \emph{arXiv preprint arXiv:2601.02854}, 2026.
 
 \bibitem[Liu et~al.(2024)Liu, Lin, Hewitt, Paranjape, Bevilacqua, Petroni, and
   Liang]{liu2023lost}
@@ -171,9 +211,23 @@ Benjamin~C. Storm and Benjamin~J. Levy.
   Footsteps: Fixation Effects of Pictorial Examples in a Design Problem-Solving
   Task.'' \emph{J. Experimental Psychology: Applied}, 2005.
 
+\bibitem[Wu et~al.(2025)Wu, Li, and Li]{wu2025reallydebate}
+Haolun Wu, Zhenkun Li, and Lingyao Li.
+\newblock Can {LLM} agents really debate? a controlled study of multi-agent
+  debate in logical reasoning.
+\newblock \emph{arXiv preprint arXiv:2511.07784}, 2025.
+
 \bibitem[Young(2026)]{young2026divergence}
 Alex Young.
 \newblock Knowledge divergence and the value of debate for scalable oversight.
 \newblock \emph{arXiv preprint arXiv:2603.05293}, 2026.
+
+\bibitem[Zhu et~al.(2026)Zhu, Zhang, Chi, Stafford, Collier, and
+  Vlachos]{zhu2026demystifying}
+Xiaochen Zhu, Caiqi Zhang, Yizhou Chi, Tom Stafford, Nigel Collier, and Andreas
+  Vlachos.
+\newblock Demystifying multi-agent debate: The role of confidence and
+  diversity.
+\newblock \emph{arXiv preprint arXiv:2601.19921}, 2026.
 
 \end{thebibliography}

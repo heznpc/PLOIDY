@@ -40,9 +40,11 @@ import argparse
 import json
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+
+from task_model import Task
 
 MODEL = "claude-opus-4-6"
 JUDGE_MODEL = "claude-opus-4-6"
@@ -492,9 +494,6 @@ def call_llm_multi_turn(turns: list[dict], model: str = None, effort: str = None
 
 
 # ─── Tasks ───────────────────────────────────────────────────────────────────
-
-
-from task_model import Task
 
 
 TASKS: list[Task] = [
@@ -1346,7 +1345,9 @@ def _run_tool_analysis(code: str) -> dict:
         try:
             result = subprocess.run(
                 ["ruff", "check", "--select", "ALL", "--output-format", "json", tmp_path],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             tools_run.append("ruff")
             if result.stdout.strip() and result.stdout.strip() != "[]":
@@ -1362,7 +1363,9 @@ def _run_tool_analysis(code: str) -> dict:
         try:
             result = subprocess.run(
                 ["mypy", "--no-color-output", "--no-error-summary", tmp_path],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             tools_run.append("mypy")
             for line in result.stdout.strip().splitlines():
@@ -1376,7 +1379,9 @@ def _run_tool_analysis(code: str) -> dict:
         try:
             result = subprocess.run(
                 ["bandit", "-f", "json", "-ll", tmp_path],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             tools_run.append("bandit")
             if result.stdout.strip():
@@ -1445,7 +1450,11 @@ def method_tool_fresh(task: Task) -> str:
         all_tools.extend(result["tools_run"])
         total_time += result["tool_time_seconds"]
 
-    tool_result = {"findings": all_findings, "tools_run": list(set(all_tools)), "tool_time_seconds": total_time}
+    tool_result = {
+        "findings": all_findings,
+        "tools_run": list(set(all_tools)),
+        "tool_time_seconds": total_time,
+    }
     tool_pos = _format_tool_position(tool_result)
 
     convergence = call_llm(
@@ -1494,7 +1503,9 @@ def method_tool_llm_informed(task: Task) -> str:
         all_tools.extend(result["tools_run"])
         total_time += result["tool_time_seconds"]
 
-    tool_findings_str = "\n".join(f"- {f}" for f in all_findings) if all_findings else "(no tool findings)"
+    tool_findings_str = (
+        "\n".join(f"- {f}" for f in all_findings) if all_findings else "(no tool findings)"
+    )
 
     # LLM-Fresh sees tool output → potential anchoring
     llm_fresh_pos = call_llm(
@@ -1581,7 +1592,9 @@ def method_tool_llm_parallel(task: Task) -> str:
         all_tools.extend(result["tools_run"])
         total_time += result["tool_time_seconds"]
 
-    tool_findings_str = "\n".join(f"- {f}" for f in all_findings) if all_findings else "(no tool findings)"
+    tool_findings_str = (
+        "\n".join(f"- {f}" for f in all_findings) if all_findings else "(no tool findings)"
+    )
 
     fresh_combined = f"--- Tool-Fresh ---\n{tool_findings_str}\n\n--- LLM-Fresh (independent) ---\n{llm_fresh_pos}"
 

@@ -19,6 +19,7 @@ from pathlib import Path
 logger = logging.getLogger("ploidy.dashboard")
 
 _DASH_PORT = int(os.environ.get("PLOIDY_DASH_PORT", "8766"))
+_DASH_HOST = os.environ.get("PLOIDY_DASH_HOST", "127.0.0.1")
 
 
 def _db_path() -> Path:
@@ -372,8 +373,8 @@ async def app(scope, receive, send):
     try:
         if path == "/" or path == "":
             debates = await _fetch_debates()
-            html = _render_debate_list(debates)
-            await _send_response(send, 200, html)
+            body = _render_debate_list(debates)
+            await _send_response(send, 200, body)
 
         elif path.startswith("/debate/"):
             debate_id = path.split("/debate/")[1].strip("/")
@@ -381,13 +382,13 @@ async def app(scope, receive, send):
             if detail is None:
                 await _send_response(send, 404, _render("<p>Debate not found.</p>"))
             else:
-                html = _render_debate_detail(detail)
-                await _send_response(send, 200, html)
+                body = _render_debate_detail(detail)
+                await _send_response(send, 200, body)
 
         elif path == "/stats":
             stats = await _fetch_stats()
-            html = _render_stats(stats)
-            await _send_response(send, 200, html)
+            body = _render_stats(stats)
+            await _send_response(send, 200, body)
 
         elif path == "/api/debates":
             debates = await _fetch_debates()
@@ -464,9 +465,9 @@ def main():
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
-    logger.info("Starting Ploidy Dashboard on port %d", _DASH_PORT)
+    logger.info("Starting Ploidy Dashboard on %s:%d", _DASH_HOST, _DASH_PORT)
     logger.info("Database: %s", _db_path())
-    uvicorn.run(app, host="0.0.0.0", port=_DASH_PORT)
+    uvicorn.run(app, host=_DASH_HOST, port=_DASH_PORT)
 
 
 if __name__ == "__main__":
