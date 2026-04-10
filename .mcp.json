@@ -1,8 +1,9 @@
 {
   "mcpServers": {
     "ploidy": {
-      "type": "streamable-http",
-      "url": "http://localhost:8765/mcp"
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "ploidy"]
     }
   }
 }

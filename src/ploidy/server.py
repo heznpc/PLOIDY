@@ -3,7 +3,7 @@
 Exposes debate tools via the Model Context Protocol, allowing MCP clients
 to initiate debates, submit positions, and retrieve convergence results.
 
-Tools exposed (11):
+Tools exposed (12):
 - debate_start: Begin a new debate session with a decision prompt
 - debate_join: Join an existing debate as the fresh session
 - debate_position: Submit a position from a session
@@ -15,6 +15,7 @@ Tools exposed (11):
 - debate_history: Retrieve past debates and their outcomes
 - debate_auto: Run a full two-sided debate automatically via API
 - debate_review: Review and resume a paused auto-debate (HITL)
+- debate_solo: Caller-supplied positions; converge in one call (no API key needed)
 """
 
 import asyncio
@@ -110,6 +111,43 @@ async def _init() -> DebateStore:
     return _store
 
 
+_RECOVERY_ROLE_MAP = {
+    "deep": SessionRole.DEEP,
+    "experienced": SessionRole.DEEP,  # backward compat with v0.1 schema
+    "semi_fresh": SessionRole.SEMI_FRESH,
+    "fresh": SessionRole.FRESH,
+}
+
+
+def _hydrate_session(s: dict) -> SessionContext:
+    """Rebuild a SessionContext from a persisted row.
+
+    Tolerates unknown enum values and missing optional columns so that
+    older databases recover cleanly. Used by both the active-debate and
+    paused-debate recovery paths.
+    """
+    role = _RECOVERY_ROLE_MAP.get(s["role"], SessionRole.FRESH)
+    try:
+        delivery_mode = DeliveryMode(s.get("delivery_mode", "none"))
+    except ValueError:
+        delivery_mode = DeliveryMode.NONE
+    try:
+        effort_level = EffortLevel(s.get("effort", "high"))
+    except ValueError:
+        effort_level = EffortLevel.HIGH
+    return SessionContext(
+        session_id=s["id"],
+        role=role,
+        base_prompt=s["base_prompt"],
+        context_documents=s.get("context_documents", []),
+        delivery_mode=delivery_mode,
+        effort=effort_level,
+        compressed_summary=s.get("compressed_summary"),
+        model=s.get("model"),
+        metadata=s.get("metadata", {}),
+    )
+
+
 async def _recover_state(store: DebateStore) -> None:
     """Reconstruct in-memory state from persisted data on startup."""
     active_debates = await store.list_active_debates()
@@ -125,30 +163,10 @@ async def _recover_state(store: DebateStore) -> None:
 
         session_ids = []
         for s in sessions:
-            role_map = {
-                "deep": SessionRole.DEEP,
-                "experienced": SessionRole.DEEP,  # backward compat
-                "semi_fresh": SessionRole.SEMI_FRESH,
-                "fresh": SessionRole.FRESH,
-            }
-            role = role_map.get(s["role"], SessionRole.FRESH)
-            try:
-                delivery_mode = DeliveryMode(s.get("delivery_mode", "none"))
-            except ValueError:
-                delivery_mode = DeliveryMode.NONE
-            ctx = SessionContext(
-                session_id=s["id"],
-                role=role,
-                base_prompt=s["base_prompt"],
-                context_documents=s.get("context_documents", []),
-                delivery_mode=delivery_mode,
-                compressed_summary=s.get("compressed_summary"),
-                model=s.get("model"),
-                metadata=s.get("metadata", {}),
-            )
-            _sessions[s["id"]] = ctx
-            _session_to_debate[s["id"]] = debate_id
-            session_ids.append(s["id"])
+            ctx = _hydrate_session(s)
+            _sessions[ctx.session_id] = ctx
+            _session_to_debate[ctx.session_id] = debate_id
+            session_ids.append(ctx.session_id)
 
         # Replay messages to reconstruct protocol state
         phase_order = list(DebatePhase)
@@ -242,30 +260,10 @@ async def _recover_state(store: DebateStore) -> None:
         sessions = await store.get_sessions(debate_id)
         session_ids = []
         for s in sessions:
-            role_map = {
-                "deep": SessionRole.DEEP,
-                "experienced": SessionRole.DEEP,  # backward compat
-                "semi_fresh": SessionRole.SEMI_FRESH,
-                "fresh": SessionRole.FRESH,
-            }
-            role = role_map.get(s["role"], SessionRole.FRESH)
-            try:
-                delivery_mode = DeliveryMode(s.get("delivery_mode", "none"))
-            except ValueError:
-                delivery_mode = DeliveryMode.NONE
-            ctx = SessionContext(
-                session_id=s["id"],
-                role=role,
-                base_prompt=s["base_prompt"],
-                context_documents=s.get("context_documents", []),
-                delivery_mode=delivery_mode,
-                compressed_summary=s.get("compressed_summary"),
-                model=s.get("model"),
-                metadata=s.get("metadata", {}),
-            )
-            _sessions[s["id"]] = ctx
-            _session_to_debate[s["id"]] = debate_id
-            session_ids.append(s["id"])
+            ctx = _hydrate_session(s)
+            _sessions[ctx.session_id] = ctx
+            _session_to_debate[ctx.session_id] = debate_id
+            session_ids.append(ctx.session_id)
 
         _protocols[debate_id] = protocol
         _debate_sessions[debate_id] = session_ids
@@ -893,6 +891,212 @@ async def debate_history(limit: int = 50) -> dict:
         "debates": debates,
         "total": len(debates),
         "limit": clamped,
+    }
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        destructiveHint=True,
+        readOnlyHint=False,
+        idempotentHint=False,
+    ),
+)
+async def debate_solo(
+    prompt: str,
+    deep_position: str,
+    fresh_position: str,
+    deep_challenge: str | None = None,
+    fresh_challenge: str | None = None,
+    context_documents: list[str] | None = None,
+    deep_label: str = "Deep",
+    fresh_label: str = "Fresh",
+) -> dict:
+    """Run a complete debate from caller-supplied positions in one call.
+
+    Single-terminal entry point. The caller (e.g. an MCP client like Claude
+    Code) generates BOTH sides of the debate locally — typically by writing
+    a deep analysis with full project context, then spawning a fresh
+    sub-agent that has only the prompt — and submits both texts here.
+    Ploidy persists the debate, classifies the challenge actions, runs
+    convergence, and returns the structured result.
+
+    No external API key (PLOIDY_API_BASE_URL) is required. This is the
+    recommended single-terminal flow for users who want the
+    "deep-thinking + agent debate" experience without setting up a
+    separate API account or running two MCP client sessions.
+
+    Args:
+        prompt: The decision question being debated.
+        deep_position: The deep (full-context) session's stance.
+        fresh_position: The fresh (zero-context) session's stance.
+        deep_challenge: Optional deep-side critique of the fresh position.
+            If omitted, the convergence engine treats this as
+            position-only (no challenges exchanged).
+        fresh_challenge: Optional fresh-side critique of the deep position.
+        context_documents: Optional context attached to the deep session
+            for the persisted history.
+        deep_label: Display name for the deep role (default "Deep").
+        fresh_label: Display name for the fresh role (default "Fresh").
+
+    Returns:
+        Complete debate result with synthesis, confidence, and points.
+    """
+    store = await _init()
+
+    _validate_length(prompt, _MAX_PROMPT_LEN, "prompt")
+    _validate_length(deep_position, _MAX_CONTENT_LEN, "deep_position")
+    _validate_length(fresh_position, _MAX_CONTENT_LEN, "fresh_position")
+    if deep_challenge is not None:
+        _validate_length(deep_challenge, _MAX_CONTENT_LEN, "deep_challenge")
+    if fresh_challenge is not None:
+        _validate_length(fresh_challenge, _MAX_CONTENT_LEN, "fresh_challenge")
+
+    docs = context_documents or []
+    if len(docs) > _MAX_CONTEXT_DOCS:
+        raise ProtocolError(f"Too many context documents ({len(docs)} > {_MAX_CONTEXT_DOCS})")
+    for i, doc in enumerate(docs):
+        _validate_length(doc, _MAX_CONTENT_LEN, f"context_documents[{i}]")
+
+    debate_id = uuid.uuid4().hex[:12]
+    config = {
+        "mode": "solo",
+        "deep_label": deep_label,
+        "fresh_label": fresh_label,
+    }
+
+    # try wraps every persistence step so a partial failure (e.g. the
+    # second save_session raising) is rolled back via _delete_failed_debate
+    try:
+        await store.save_debate(debate_id, prompt, config=config)
+
+        deep_id = f"{debate_id}-deep-{uuid.uuid4().hex[:6]}"
+        fresh_id = f"{debate_id}-fresh-{uuid.uuid4().hex[:6]}"
+        deep_ctx = SessionContext(
+            session_id=deep_id,
+            role=SessionRole.DEEP,
+            base_prompt=prompt,
+            context_documents=docs,
+            delivery_mode=DeliveryMode.PASSIVE,
+        )
+        fresh_ctx = SessionContext(
+            session_id=fresh_id,
+            role=SessionRole.FRESH,
+            base_prompt=prompt,
+            context_documents=[],
+            delivery_mode=DeliveryMode.NONE,
+        )
+        await store.save_session(
+            deep_id,
+            debate_id,
+            SessionRole.DEEP.value,
+            prompt,
+            context_documents=docs,
+            delivery_mode=deep_ctx.delivery_mode.value,
+        )
+        await store.save_session(
+            fresh_id,
+            debate_id,
+            SessionRole.FRESH.value,
+            prompt,
+            context_documents=[],
+            delivery_mode=fresh_ctx.delivery_mode.value,
+        )
+        _sessions[deep_id] = deep_ctx
+        _sessions[fresh_id] = fresh_ctx
+        _debate_sessions[debate_id] = [deep_id, fresh_id]
+        _session_to_debate[deep_id] = debate_id
+        _session_to_debate[fresh_id] = debate_id
+
+        protocol = DebateProtocol(debate_id, prompt)
+        _protocols[debate_id] = protocol
+        _debate_locks[debate_id] = asyncio.Lock()
+
+        protocol.advance_phase()
+        for sid, content in ((deep_id, deep_position), (fresh_id, fresh_position)):
+            msg = DebateMessage(
+                session_id=sid,
+                phase=DebatePhase.POSITION,
+                content=content,
+                timestamp=_now(),
+            )
+            protocol.submit_message(msg)
+            await store.save_message(debate_id, sid, DebatePhase.POSITION.value, content)
+
+        protocol.advance_phase()
+
+        for sid, content in ((deep_id, deep_challenge), (fresh_id, fresh_challenge)):
+            if not content:
+                continue
+            action = _parse_dominant_action(content)
+            ch_msg = DebateMessage(
+                session_id=sid,
+                phase=DebatePhase.CHALLENGE,
+                content=content,
+                timestamp=_now(),
+                action=action,
+            )
+            protocol.submit_message(ch_msg)
+            await store.save_message(
+                debate_id, sid, DebatePhase.CHALLENGE.value, content, action.value
+            )
+
+        protocol.advance_phase()
+
+        engine = ConvergenceEngine(use_llm=_USE_LLM_CONVERGENCE)
+        session_roles = {deep_id: deep_label, fresh_id: fresh_label}
+        result = await engine.analyze(protocol, session_roles)
+
+        protocol.advance_phase()
+
+        points_json = json.dumps(
+            [
+                {
+                    "category": p.category,
+                    "summary": p.summary,
+                    "session_a_view": p.session_a_view,
+                    "session_b_view": p.session_b_view,
+                    "resolution": p.resolution,
+                    "root_cause": p.root_cause,
+                }
+                for p in result.points
+            ]
+        )
+        await store.save_convergence_and_complete(
+            debate_id,
+            result.synthesis,
+            result.confidence,
+            points_json,
+            meta_analysis=result.meta_analysis,
+        )
+        _cleanup_debate(debate_id)
+    except Exception:
+        await _delete_failed_debate(store, debate_id)
+        raise
+
+    logger.info(
+        "Solo debate %s complete (confidence=%.2f, challenges=%d)",
+        debate_id,
+        result.confidence,
+        sum(1 for c in (deep_challenge, fresh_challenge) if c),
+    )
+
+    return {
+        "debate_id": debate_id,
+        "phase": "complete",
+        "mode": "solo",
+        "config": config,
+        "synthesis": result.synthesis,
+        "confidence": result.confidence,
+        "meta_analysis": result.meta_analysis,
+        "points": [
+            {
+                "category": p.category,
+                "summary": p.summary,
+                "resolution": p.resolution,
+                "root_cause": p.root_cause,
+            }
+            for p in result.points
+        ],
     }
 
 
@@ -1657,5 +1861,9 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _shutdown_handler)
     signal.signal(signal.SIGINT, _shutdown_handler)
 
-    transport = os.environ.get("PLOIDY_TRANSPORT", "streamable-http")
+    # Default to stdio so MCP clients (Claude Code, etc.) can spawn the server
+    # on demand, with no separate lifecycle to manage. Set
+    # PLOIDY_TRANSPORT=streamable-http (or sse) for the multi-client
+    # cross-session deployment described in the v0.1 architecture doc.
+    transport = os.environ.get("PLOIDY_TRANSPORT", "stdio")
     mcp.run(transport=transport)

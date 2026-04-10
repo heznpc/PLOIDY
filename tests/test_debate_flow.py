@@ -264,6 +264,95 @@ async def test_session_context_is_recovered():
     assert sf.metadata == {"source": "test"}
 
 
+async def test_recovered_session_preserves_effort_and_model():
+    """Effort and model fields survive a server restart cycle.
+
+    Regression: get_sessions() previously omitted these columns from
+    its SELECT, so recovery silently dropped them.
+    """
+    store = await server._init()
+    debate_id = "rec-em-001"
+    await store.save_debate(debate_id, "Recovery prompt")
+
+    sid = f"{debate_id}-deep-aaa"
+    await store.save_session(
+        sid,
+        debate_id,
+        "deep",
+        "Recovery prompt",
+        delivery_mode="passive",
+        model="gpt-test-mini",
+        effort="max",
+    )
+
+    await server.shutdown()
+    await server._init()
+
+    ctx = server._sessions.get(sid)
+    assert ctx is not None, "session not recovered"
+    assert ctx.model == "gpt-test-mini"
+    assert ctx.effort.value == "max"
+
+
+async def test_debate_solo_runs_without_api():
+    """debate_solo accepts caller-supplied positions and converges in one call."""
+    result = await server.debate_solo(
+        prompt="Should we adopt async I/O for the request handlers?",
+        deep_position=(
+            "Async will pay off because we've already taken on aiosqlite and httpx. "
+            "Migrating the handlers consolidates the loop ownership."
+        ),
+        fresh_position=(
+            "Threads are simpler and our throughput target is modest. "
+            "Async adds debugging overhead with no measured benefit."
+        ),
+        deep_challenge="CHALLENGE: simplicity is rationalization given our existing async deps.",
+        fresh_challenge="CHALLENGE: deep session is over-fitting to historical choices.",
+        context_documents=["aiosqlite + httpx already in dependencies"],
+    )
+
+    assert result["phase"] == "complete"
+    assert result["mode"] == "solo"
+    assert isinstance(result["confidence"], float)
+    assert 0.0 <= result["confidence"] <= 1.0
+    assert isinstance(result["points"], list)
+    assert len(result["points"]) >= 1
+    assert result["synthesis"]
+    debate_id = result["debate_id"]
+    # _cleanup_debate must drop every map it touches; missing one would
+    # leak server state across runs
+    assert debate_id not in server._protocols
+    assert debate_id not in server._debate_sessions
+    assert debate_id not in server._debate_locks
+    assert not any(sid.startswith(debate_id) for sid in server._sessions)
+    assert not any(sid.startswith(debate_id) for sid in server._session_to_debate)
+
+    history = await server.debate_history()
+    assert any(d["id"] == debate_id and d["status"] == "complete" for d in history["debates"])
+
+
+async def test_debate_solo_without_challenges():
+    """debate_solo works when no challenges are supplied (positions only)."""
+    result = await server.debate_solo(
+        prompt="Test",
+        deep_position="A",
+        fresh_position="B",
+    )
+    assert result["phase"] == "complete"
+    # No challenges → convergence engine emits the irreducible-no-challenges point
+    assert any(p["category"] == "irreducible" for p in result["points"])
+
+
+async def test_debate_solo_validates_input_lengths():
+    """Oversized positions are rejected."""
+    with pytest.raises(Exception, match="exceeds maximum length"):
+        await server.debate_solo(
+            prompt="Test",
+            deep_position="x" * 100000,
+            fresh_position="ok",
+        )
+
+
 async def test_debate_auto_generates_both_sides(monkeypatch):
     """Auto debate should generate positions and challenges for both sessions."""
     monkeypatch.setattr(api_client, "is_api_available", lambda: True)

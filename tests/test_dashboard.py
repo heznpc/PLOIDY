@@ -51,3 +51,27 @@ def test_render_debate_detail_escapes_transcript_and_synthesis():
     assert "&lt;b&gt;prompt&lt;/b&gt;" in html
     assert "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;" in html
     assert "&lt;iframe&gt;&lt;/iframe&gt;" in html
+
+
+async def test_app_error_handler_does_not_crash_on_db_failure(monkeypatch, tmp_path):
+    """Regression: html-module shadowing in app() crashed the 500 path.
+
+    Pointing the dashboard at a nonexistent DB used to raise
+    UnboundLocalError inside the except handler instead of returning 500.
+    """
+    monkeypatch.setenv("PLOIDY_DB_PATH", str(tmp_path / "missing" / "ploidy.db"))
+
+    captured: list[dict] = []
+
+    async def receive() -> dict:
+        return {}
+
+    async def send(msg: dict) -> None:
+        captured.append(msg)
+
+    scope = {"type": "http", "path": "/", "method": "GET"}
+    await dashboard.app(scope, receive, send)
+
+    starts = [m for m in captured if m["type"] == "http.response.start"]
+    assert starts, "no response.start emitted"
+    assert starts[0]["status"] == 500

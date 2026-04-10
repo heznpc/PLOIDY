@@ -389,7 +389,8 @@ class DebateStore:
         db = _require_db(self._db)
         cursor = await db.execute(
             "SELECT id, debate_id, role, base_prompt, context_documents, delivery_mode, "
-            "compressed_summary, metadata_json, created_at FROM sessions WHERE debate_id = ?",
+            "compressed_summary, metadata_json, model, effort, created_at "
+            "FROM sessions WHERE debate_id = ?",
             (debate_id,),
         )
         sessions = []

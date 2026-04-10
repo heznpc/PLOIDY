@@ -23,18 +23,41 @@ Ploidy takes the orthogonal approach: **deliberately create context asymmetry wi
 # Install
 pip install ploidy              # core server
 pip install ploidy[api]         # + auto-debate mode (requires OpenAI SDK)
-
-# Start the server
-python -m ploidy
 ```
 
-**Terminal 1 (Deep session)** — tell your AI:
-> "Start a Ploidy debate: Should we use monorepo or polyrepo?"
+### MCP Client Configuration (stdio — recommended)
 
-**Terminal 2 (Fresh session)** — tell your AI:
-> "Join Ploidy debate a1b2c3d4e5f6"
+The default transport is `stdio`, so the MCP client spawns the server on
+demand and there is no separate process to manage:
 
-### MCP Client Configuration
+```json
+{
+  "mcpServers": {
+    "ploidy": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "ploidy"]
+    }
+  }
+}
+```
+
+### Single-terminal flow (no API key)
+
+Inside one MCP client session, ask the assistant to write two analyses
+— one with full project context, one from a fresh sub-agent that only
+sees the prompt — then call `debate_solo` with both texts. Ploidy
+persists the debate, classifies the challenges, and returns the
+convergence in a single tool call.
+
+### Two-terminal flow (cross-session, multi-client)
+
+For the original cross-session experience, run the server over HTTP and
+configure each MCP client to point at it:
+
+```bash
+PLOIDY_TRANSPORT=streamable-http python3 -m ploidy
+```
 
 ```json
 {
@@ -46,6 +69,12 @@ python -m ploidy
   }
 }
 ```
+
+**Terminal 1 (Deep session)** — tell your AI:
+> "Start a Ploidy debate: Should we use monorepo or polyrepo?"
+
+**Terminal 2 (Fresh session)** — tell your AI:
+> "Join Ploidy debate a1b2c3d4e5f6"
 
 ## How It Works
 
@@ -81,6 +110,7 @@ Sessions debate through typed semantic actions (agree, challenge, propose altern
 | `debate_history` | List past debates |
 | `debate_auto` | Run a full two-sided debate automatically via API |
 | `debate_review` | Review and resume a paused auto-debate (HITL) |
+| `debate_solo` | Caller-supplied positions; converge in one call (no API key) |
 
 ## Configuration
 
