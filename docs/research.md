@@ -460,7 +460,7 @@ If you use Ploidy in your research, please cite:
 ```bibtex
 @software{ploidy2026,
   title = {Ploidy: Cross-Session Multi-Agent Debate with Intentional Context Asymmetry},
-  author = {heznpc},
+  author = {Yoon, Jiyeon},
   year = {2026},
   url = {https://github.com/heznpc/ploidy},
   note = {Pre-alpha software}
