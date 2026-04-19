@@ -80,6 +80,10 @@ _USE_LLM_CONVERGENCE = os.environ.get("PLOIDY_LLM_CONVERGENCE", "").lower() in (
 # 0 disables the limiter. Capacity is the burst allowance; rate is sustained.
 _RATE_CAPACITY = float(os.environ.get("PLOIDY_RATE_CAPACITY", "0"))
 _RATE_PER_SEC = float(os.environ.get("PLOIDY_RATE_PER_SEC", "0"))
+# Retention: purge completed/cancelled debates older than N days. 0 disables.
+_RETENTION_DAYS = int(os.environ.get("PLOIDY_RETENTION_DAYS", "0"))
+_RETENTION_INTERVAL_SEC = int(os.environ.get("PLOIDY_RETENTION_INTERVAL_SEC", "3600"))
+_RETENTION_VACUUM = os.environ.get("PLOIDY_RETENTION_VACUUM", "1").lower() in ("1", "true", "yes")
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +192,9 @@ async def _init() -> DebateService:
                 rate_limiter=TokenBucketLimiter(
                     capacity=_RATE_CAPACITY, rate_per_sec=_RATE_PER_SEC
                 ),
+                retention_days=_RETENTION_DAYS,
+                retention_interval_seconds=_RETENTION_INTERVAL_SEC,
+                retention_vacuum=_RETENTION_VACUUM,
             )
         await _service.initialize()
         return _service

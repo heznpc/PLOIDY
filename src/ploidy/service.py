@@ -92,6 +92,9 @@ class DebateService:
         max_context_docs: int = 10,
         max_sessions_per_debate: int = 5,
         rate_limiter: TokenBucketLimiter | None = None,
+        retention_days: int = 0,
+        retention_interval_seconds: int = 3600,
+        retention_vacuum: bool = True,
     ) -> None:
         self.store = store or DebateStore()
         self.use_llm_convergence = use_llm_convergence
@@ -99,9 +102,13 @@ class DebateService:
         self.max_content_len = max_content_len
         self.max_context_docs = max_context_docs
         self.max_sessions_per_debate = max_sessions_per_debate
+        self.retention_days = retention_days
+        self.retention_interval_seconds = retention_interval_seconds
+        self.retention_vacuum = retention_vacuum
         # When no limiter is supplied, fall back to a disabled one so callers
         # can always `await self.rate_limiter.acquire(...)` without branching.
         self.rate_limiter = rate_limiter or TokenBucketLimiter(capacity=0, rate_per_sec=0)
+        self._retention_task: asyncio.Task[None] | None = None
 
         self.protocols: dict[str, DebateProtocol] = {}
         self.sessions: dict[str, SessionContext] = {}
@@ -125,9 +132,18 @@ class DebateService:
             return
         await self.store.initialize()
         await self._recover_state()
+        if self.retention_days > 0:
+            self._retention_task = asyncio.create_task(self._retention_loop())
         self._initialized = True
 
     async def shutdown(self) -> None:
+        if self._retention_task is not None:
+            self._retention_task.cancel()
+            try:
+                await self._retention_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._retention_task = None
         if self.store is not None:
             await self.store.close()
         self.protocols.clear()
@@ -138,6 +154,41 @@ class DebateService:
         self.paused_debates.clear()
         self.debate_owners.clear()
         self._initialized = False
+
+    async def run_retention_once(self) -> int:
+        """Purge completed/cancelled debates older than retention_days.
+
+        Returns the number of rows removed. Running with
+        ``retention_days <= 0`` is a no-op that returns 0, which keeps the
+        call site symmetric whether retention is configured or not.
+        """
+        if self.retention_days <= 0:
+            return 0
+        from datetime import timedelta
+
+        cutoff = datetime.now(UTC) - timedelta(days=self.retention_days)
+        # SQLite's datetime('now') column uses " " as separator — match it.
+        cutoff_iso = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+        removed = await self.store.purge_terminal_before(cutoff_iso)
+        if removed > 0:
+            logger.info("Retention purged %d terminal debate(s) older than %s", removed, cutoff_iso)
+            if self.retention_vacuum:
+                try:
+                    await self.store.vacuum()
+                except Exception:
+                    logger.exception("VACUUM after retention purge failed")
+        return removed
+
+    async def _retention_loop(self) -> None:
+        """Periodic retention task. Sleeps between runs and swallows errors."""
+        while True:
+            try:
+                await asyncio.sleep(self.retention_interval_seconds)
+                await self.run_retention_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Retention pass failed; will retry on next tick")
 
     # ------------------------------------------------------------------
     # Helpers

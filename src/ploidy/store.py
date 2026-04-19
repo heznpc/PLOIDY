@@ -642,6 +642,47 @@ class DebateStore:
         await db.execute("DELETE FROM debates WHERE id = ?", (debate_id,))
         await self._commit()
 
+    async def purge_terminal_before(self, cutoff_iso: str) -> int:
+        """Delete completed/cancelled debates whose updated_at < cutoff.
+
+        Active and paused debates are preserved regardless of age so long
+        running sessions are never reaped.
+
+        Args:
+            cutoff_iso: ISO-8601 UTC timestamp. Rows older than this are
+                eligible for deletion.
+
+        Returns:
+            Number of debate rows removed. Related messages, sessions, and
+            convergence rows are cascaded via DELETE statements in the same
+            transaction.
+        """
+        db = _require_db(self._db)
+        async with self.transaction():
+            cursor = await db.execute(
+                "SELECT id FROM debates "
+                "WHERE status IN ('complete', 'cancelled') AND updated_at < ?",
+                (cutoff_iso,),
+            )
+            rows = await cursor.fetchall()
+            debate_ids = [r["id"] for r in rows]
+            for did in debate_ids:
+                await db.execute("DELETE FROM messages WHERE debate_id = ?", (did,))
+                await db.execute("DELETE FROM convergence WHERE debate_id = ?", (did,))
+                await db.execute("DELETE FROM sessions WHERE debate_id = ?", (did,))
+                await db.execute("DELETE FROM debates WHERE id = ?", (did,))
+        return len(debate_ids)
+
+    async def vacuum(self) -> None:
+        """Run ``VACUUM`` to reclaim space after a bulk delete.
+
+        SQLite disallows VACUUM inside a transaction, so callers must
+        ensure no ``transaction()`` context is active when this runs.
+        """
+        db = _require_db(self._db)
+        await db.execute("VACUUM")
+        await self._commit()
+
     async def close(self) -> None:
         """Close the database connection."""
         if self._db is not None:

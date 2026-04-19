@@ -30,6 +30,7 @@ dependencies = [
 [project.scripts]
 ploidy = "ploidy.server:main"
 ploidy-dashboard = "ploidy.dashboard:main"
+ploidy-retention = "ploidy.retention:main"
 
 [project.optional-dependencies]
 api = [
