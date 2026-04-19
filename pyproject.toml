@@ -42,19 +42,23 @@ analysis = [
     "numpy>=1.24",
     "scipy>=1.10",
 ]
+metrics = [
+    "prometheus-client>=0.20",
+]
 dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
     "httpx",
     "ruff",
+    "prometheus-client>=0.20",
 ]
 docs = [
     "mkdocs-material",
     "mkdocs-minify-plugin",
 ]
 all = [
-    "ploidy[api,dashboard,dev,docs,analysis]",
+    "ploidy[api,dashboard,dev,docs,analysis,metrics]",
 ]
 
 [tool.ruff]

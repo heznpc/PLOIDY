@@ -21,6 +21,8 @@ import asyncio
 import logging
 import os
 
+from ploidy.metrics import metrics
+
 logger = logging.getLogger("ploidy.api")
 
 _MAX_RETRIES = 3
@@ -127,11 +129,14 @@ async def generate_response(
                 await asyncio.sleep(delay)
                 continue
             logger.error("API call failed: %s (%s)", e, type(e).__name__)
+            metrics().api_calls.labels(tenant="unscoped", outcome="error").inc()
             raise RuntimeError(f"Ploidy API call failed: {e}") from e
         try:
             content = response.choices[0].message.content or ""
         except (IndexError, KeyError, AttributeError) as e:
+            metrics().api_calls.labels(tenant="unscoped", outcome="malformed").inc()
             raise RuntimeError(f"Ploidy API returned empty or malformed choices: {e}") from e
+        metrics().api_calls.labels(tenant="unscoped", outcome="ok").inc()
         return content
     raise RuntimeError(f"Ploidy API call failed after {_MAX_RETRIES} retries: {last_error}")
 

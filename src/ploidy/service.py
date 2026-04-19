@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -28,8 +29,9 @@ from ploidy.injection import (
     append_language,
     build_deep_prompt,
 )
+from ploidy.metrics import metrics, tenant_label
 from ploidy.protocol import DebateMessage, DebatePhase, DebateProtocol, SemanticAction
-from ploidy.ratelimit import TokenBucketLimiter
+from ploidy.ratelimit import RateLimitError, TokenBucketLimiter
 from ploidy.session import DeliveryMode, EffortLevel, SessionContext, SessionRole
 from ploidy.store import DebateStore
 
@@ -163,6 +165,14 @@ class DebateService:
         for sid in session_ids:
             self.sessions.pop(sid, None)
             self.session_to_debate.pop(sid, None)
+
+    async def _acquire_or_count(self, tenant: str, cost: float = 1.0) -> None:
+        """Acquire a rate-limit token, recording metrics on rejection."""
+        try:
+            await self.rate_limiter.acquire(tenant, cost=cost)
+        except RateLimitError:
+            metrics().rate_limit_rejections.labels(tenant=tenant).inc()
+            raise
 
     def _require_owner(self, debate_id: str, caller: str | None) -> None:
         """Raise PloidyError if ``caller`` is not allowed to touch the debate.
@@ -347,10 +357,11 @@ class DebateService:
         prompt: str,
         context_documents: list[str] | None = None,
         *,
-        tenant: str = "global",
+        tenant: str | None = None,
         owner_id: str | None = None,
     ) -> dict[str, Any]:
-        await self.rate_limiter.acquire(tenant)
+        tenant = tenant or owner_id or "global"
+        await self._acquire_or_count(tenant)
         self._validate_length(prompt, self.max_prompt_len, "prompt")
         docs = context_documents or []
         if len(docs) > self.max_context_docs:
@@ -390,6 +401,7 @@ class DebateService:
         self.debate_locks[debate_id] = asyncio.Lock()
         self.debate_owners[debate_id] = owner_id
 
+        metrics().debate_started.labels(tenant=tenant_label(owner_id), mode="two_terminal").inc()
         logger.info("Debate started: %s by session %s", debate_id, deep_id)
 
         return {
@@ -496,6 +508,10 @@ class DebateService:
             )
             protocol.submit_message(msg)
             await self.store.save_message(debate_id, session_id, "position", content)
+            metrics().messages_recorded.labels(
+                tenant=tenant_label(self.debate_owners.get(debate_id)),
+                phase="position",
+            ).inc()
 
             session_ids = set(self.debate_sessions[debate_id])
             submitted = {m.session_id for m in protocol.messages if m.phase == DebatePhase.POSITION}
@@ -555,6 +571,10 @@ class DebateService:
             )
             protocol.submit_message(msg)
             await self.store.save_message(debate_id, session_id, "challenge", content, action)
+            metrics().messages_recorded.labels(
+                tenant=tenant_label(self.debate_owners.get(debate_id)),
+                phase="challenge",
+            ).inc()
 
         logger.info("Challenge from %s in debate %s (action=%s)", session_id, debate_id, action)
 
@@ -572,6 +592,7 @@ class DebateService:
         if protocol is None:
             raise PloidyError(f"Debate {debate_id} not found")
         self._require_owner(debate_id, owner_id)
+        tenant = tenant_label(self.debate_owners.get(debate_id))
 
         lock = self._get_lock(debate_id)
 
@@ -589,7 +610,11 @@ class DebateService:
                 for sid in self.debate_sessions.get(debate_id, [])
                 if sid in self.sessions
             }
+            started = time.perf_counter()
             result = await engine.analyze(protocol, session_roles)
+            metrics().convergence_duration.labels(tenant=tenant, mode="two_terminal").observe(
+                time.perf_counter() - started
+            )
 
             protocol.advance_phase()  # → COMPLETE
 
@@ -610,6 +635,7 @@ class DebateService:
         )
 
         self._cleanup_debate(debate_id)
+        metrics().debate_completed.labels(tenant=tenant, mode="two_terminal").inc()
 
         logger.info(
             "Debate %s converged (confidence=%.2f, points=%d)",
@@ -642,8 +668,10 @@ class DebateService:
         if protocol.phase == DebatePhase.COMPLETE:
             raise ProtocolError("Cannot cancel a completed debate")
 
+        tenant = tenant_label(self.debate_owners.get(debate_id))
         await self.store.update_debate_status(debate_id, "cancelled")
         self._cleanup_debate(debate_id)
+        metrics().debate_cancelled.labels(tenant=tenant, outcome="cancelled").inc()
 
         logger.info("Debate %s cancelled", debate_id)
 
@@ -715,10 +743,11 @@ class DebateService:
         deep_label: str = "Deep",
         fresh_label: str = "Fresh",
         *,
-        tenant: str = "global",
+        tenant: str | None = None,
         owner_id: str | None = None,
     ) -> dict[str, Any]:
-        await self.rate_limiter.acquire(tenant)
+        tenant = tenant or owner_id or "global"
+        await self._acquire_or_count(tenant)
         self._validate_length(prompt, self.max_prompt_len, "prompt")
         self._validate_length(deep_position, self.max_content_len, "deep_position")
         self._validate_length(fresh_position, self.max_content_len, "fresh_position")
@@ -737,6 +766,7 @@ class DebateService:
 
         debate_id = uuid.uuid4().hex[:12]
         config = {"mode": "solo", "deep_label": deep_label, "fresh_label": fresh_label}
+        metrics().debate_started.labels(tenant=tenant_label(owner_id), mode="solo").inc()
 
         try:
             async with self.store.transaction():
@@ -852,6 +882,7 @@ class DebateService:
             await self._delete_failed_debate(debate_id)
             raise
 
+        metrics().debate_completed.labels(tenant=tenant_label(owner_id), mode="solo").inc()
         logger.info(
             "Solo debate %s complete (confidence=%.2f, challenges=%d)",
             debate_id,
@@ -894,10 +925,11 @@ class DebateService:
         deep_model: str | None = None,
         fresh_model: str | None = None,
         *,
-        tenant: str = "global",
+        tenant: str | None = None,
         owner_id: str | None = None,
     ) -> dict[str, Any]:
-        await self.rate_limiter.acquire(tenant, cost=float(deep_n + fresh_n))
+        tenant = tenant or owner_id or "global"
+        await self._acquire_or_count(tenant, cost=float(deep_n + fresh_n))
         try:
             from ploidy.api_client import (
                 compress_failures_only,
@@ -998,6 +1030,7 @@ class DebateService:
 
         debate_id = uuid.uuid4().hex[:12]
         await self.store.save_debate(debate_id, prompt, config=config, owner_id=owner_id)
+        metrics().debate_started.labels(tenant=tenant_label(owner_id), mode="auto").inc()
 
         protocol = DebateProtocol(debate_id, prompt)
         self.protocols[debate_id] = protocol
@@ -1299,6 +1332,7 @@ class DebateService:
             await self._delete_failed_debate(debate_id)
             raise
 
+        metrics().debate_completed.labels(tenant=tenant_label(owner_id), mode="auto").inc()
         logger.info(
             "Auto-debate %s complete (confidence=%.2f, ploidy=%dn)",
             debate_id,
@@ -1353,8 +1387,10 @@ class DebateService:
             raise PloidyError(f"Protocol state lost for debate {debate_id}")
 
         if action == "reject":
+            tenant = tenant_label(self.debate_owners.get(debate_id))
             await self.store.update_debate_status(debate_id, "cancelled")
             self._cleanup_debate(debate_id)
+            metrics().debate_cancelled.labels(tenant=tenant, outcome="rejected").inc()
             logger.info("Auto-debate %s rejected by human reviewer", debate_id)
             return {
                 "debate_id": debate_id,
@@ -1490,7 +1526,9 @@ class DebateService:
             points_json,
             meta_analysis=result.meta_analysis,
         )
+        tenant = tenant_label(self.debate_owners.get(debate_id))
         self._cleanup_debate(debate_id)
+        metrics().debate_completed.labels(tenant=tenant, mode="auto_hitl").inc()
 
         logger.info(
             "Auto-debate %s resumed and completed via HITL (confidence=%.2f)",

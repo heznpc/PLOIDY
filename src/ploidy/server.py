@@ -152,6 +152,17 @@ async def _healthz(_request):
     return JSONResponse({"status": "ok"})
 
 
+@mcp.custom_route("/metrics", methods=["GET"])
+async def _metrics_endpoint(_request):
+    """Prometheus scrape endpoint. Unauthenticated by design (infra-private)."""
+    from starlette.responses import Response
+
+    from ploidy.metrics import content_type, metrics
+
+    body = metrics().render()
+    return Response(body, media_type=content_type())
+
+
 # ---------------------------------------------------------------------------
 # Service instance
 # ---------------------------------------------------------------------------
