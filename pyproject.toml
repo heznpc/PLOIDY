@@ -37,7 +37,6 @@ api = [
 ]
 dashboard = [
     "uvicorn>=0.30",
-    "aiosqlite>=0.20,<1",
 ]
 analysis = [
     "numpy>=1.24",

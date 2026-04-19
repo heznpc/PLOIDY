@@ -112,8 +112,6 @@ async def generate_response(
                 ),
                 timeout=_PER_CALL_TIMEOUT,
             )
-        except (IndexError, KeyError, AttributeError) as e:
-            raise RuntimeError(f"Ploidy API returned malformed response: {e}") from e
         except Exception as e:
             is_retryable = isinstance(e, TimeoutError) or type(e).__name__ in retryable_names
             last_error = e
@@ -130,12 +128,11 @@ async def generate_response(
                 continue
             logger.error("API call failed: %s (%s)", e, type(e).__name__)
             raise RuntimeError(f"Ploidy API call failed: {e}") from e
-        else:
-            try:
-                content = response.choices[0].message.content or ""
-            except (IndexError, KeyError, AttributeError) as e:
-                raise RuntimeError(f"Ploidy API returned empty or malformed choices: {e}") from e
-            return content
+        try:
+            content = response.choices[0].message.content or ""
+        except (IndexError, KeyError, AttributeError) as e:
+            raise RuntimeError(f"Ploidy API returned empty or malformed choices: {e}") from e
+        return content
     raise RuntimeError(f"Ploidy API call failed after {_MAX_RETRIES} retries: {last_error}")
 
 

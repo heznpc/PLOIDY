@@ -10,6 +10,7 @@ Usage:
 Requires: pip install ploidy[dashboard]
 """
 
+import hmac
 import html
 import json
 import logging
@@ -20,6 +21,30 @@ logger = logging.getLogger("ploidy.dashboard")
 
 _DASH_PORT = int(os.environ.get("PLOIDY_DASH_PORT", "8766"))
 _DASH_HOST = os.environ.get("PLOIDY_DASH_HOST", "127.0.0.1")
+_DASH_TOKEN = os.environ.get("PLOIDY_DASH_TOKEN")
+
+
+def _is_authorized(scope: dict) -> bool:
+    """Check bearer token when PLOIDY_DASH_TOKEN is configured.
+
+    Unconfigured token means the dashboard is treated as trusted-local;
+    callers should bind to 127.0.0.1 in that mode. Any non-loopback host
+    without a token is rejected to prevent accidental public exposure.
+    """
+    headers = {
+        k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])
+    }
+    if _DASH_TOKEN:
+        auth = headers.get("authorization", "")
+        if not auth.lower().startswith("bearer "):
+            return False
+        presented = auth.split(" ", 1)[1].strip()
+        return hmac.compare_digest(presented.encode("utf-8"), _DASH_TOKEN.encode("utf-8"))
+    # No token configured: only allow loopback binding
+    client = scope.get("client")
+    if client and client[0] in ("127.0.0.1", "::1"):
+        return True
+    return _DASH_HOST in ("127.0.0.1", "::1", "localhost")
 
 
 def _db_path() -> Path:
@@ -368,6 +393,20 @@ async def app(scope, receive, send):
 
     if method != "GET":
         await _send_response(send, 405, "Method not allowed")
+        return
+
+    if not _is_authorized(scope):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    [b"content-type", b"text/plain; charset=utf-8"],
+                    [b"www-authenticate", b'Bearer realm="ploidy-dashboard"'],
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"unauthorized"})
         return
 
     try:
