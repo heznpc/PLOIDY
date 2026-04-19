@@ -21,9 +21,11 @@ Tools exposed (12):
 
 import asyncio
 import hmac
+import json
 import logging
 import os
 
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -46,6 +48,30 @@ _MAX_CONTENT_LEN = int(os.environ.get("PLOIDY_MAX_CONTENT_LEN", "50000"))
 _MAX_CONTEXT_DOCS = int(os.environ.get("PLOIDY_MAX_CONTEXT_DOCS", "10"))
 _MAX_SESSIONS_PER_DEBATE = int(os.environ.get("PLOIDY_MAX_SESSIONS", "5"))
 _AUTH_TOKEN = os.environ.get("PLOIDY_AUTH_TOKEN")
+# Multi-tenant: a JSON map {token: tenant_id}. When set, overrides
+# PLOIDY_AUTH_TOKEN. Each accepted token resolves to a distinct
+# AccessToken.client_id, which the service uses as owner_id.
+_TOKEN_MAP_RAW = os.environ.get("PLOIDY_TOKENS", "")
+
+
+def _load_token_map() -> dict[str, str]:
+    if _TOKEN_MAP_RAW:
+        try:
+            parsed = json.loads(_TOKEN_MAP_RAW)
+        except json.JSONDecodeError as exc:
+            logger.error("PLOIDY_TOKENS is not valid JSON: %s", exc)
+            return {}
+        if not isinstance(parsed, dict):
+            logger.error("PLOIDY_TOKENS must decode to an object of token→tenant")
+            return {}
+        return {str(k): str(v) for k, v in parsed.items()}
+    if _AUTH_TOKEN:
+        return {_AUTH_TOKEN: "ploidy-client"}
+    return {}
+
+
+_TOKEN_MAP: dict[str, str] = _load_token_map()
+
 _USE_LLM_CONVERGENCE = os.environ.get("PLOIDY_LLM_CONVERGENCE", "").lower() in (
     "1",
     "true",
@@ -62,24 +88,48 @@ _RATE_PER_SEC = float(os.environ.get("PLOIDY_RATE_PER_SEC", "0"))
 
 
 class _PloidyTokenVerifier:
-    """Bearer token verifier with constant-time compare."""
+    """Bearer token verifier with constant-time compare over a token map.
+
+    The resolved ``AccessToken.client_id`` becomes the ``owner_id`` every
+    tool call carries, so the token the caller presents effectively picks
+    which tenant's data they can see.
+    """
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        if not _AUTH_TOKEN:
+        if not _TOKEN_MAP:
             return None
-        if hmac.compare_digest(token.encode("utf-8"), _AUTH_TOKEN.encode("utf-8")):
-            return AccessToken(
-                token=token,
-                client_id="ploidy-client",
-                scopes=["debate"],
-            )
-        return None
+        presented = token.encode("utf-8")
+        # Iterate all entries so the comparison time is independent of
+        # which token (if any) matches, instead of short-circuiting.
+        matched_tenant: str | None = None
+        for candidate, tenant in _TOKEN_MAP.items():
+            if hmac.compare_digest(presented, candidate.encode("utf-8")):
+                matched_tenant = tenant
+        if matched_tenant is None:
+            return None
+        return AccessToken(
+            token=token,
+            client_id=matched_tenant,
+            scopes=["debate"],
+        )
 
 
 _auth_kwargs: dict = {}
-if _AUTH_TOKEN:
+if _TOKEN_MAP:
     _auth_kwargs["token_verifier"] = _PloidyTokenVerifier()
-    logger.info("Bearer token auth enabled via PLOIDY_AUTH_TOKEN")
+    logger.info(
+        "Bearer token auth enabled; %d tenant token(s) loaded",
+        len(_TOKEN_MAP),
+    )
+
+
+def _current_owner() -> str | None:
+    """Return the caller's tenant id from the MCP auth context, if any."""
+    if not _TOKEN_MAP:
+        return None
+    tok = get_access_token()
+    return tok.client_id if tok is not None else None
+
 
 mcp = FastMCP(
     "Ploidy",
@@ -157,7 +207,10 @@ async def debate_start(prompt: str, context_documents: list[str] | None = None) 
     Share the returned debate_id with the fresh session so it can join.
     """
     svc = await _init()
-    return await svc.start_debate(prompt, context_documents)
+    owner = _current_owner()
+    return await svc.start_debate(
+        prompt, context_documents, tenant=owner or "global", owner_id=owner
+    )
 
 
 @mcp.tool(
@@ -171,7 +224,7 @@ async def debate_join(
 ) -> dict:
     """Join an existing debate as a fresh or semi-fresh session."""
     svc = await _init()
-    return await svc.join_debate(debate_id, role, delivery_mode)
+    return await svc.join_debate(debate_id, role, delivery_mode, owner_id=_current_owner())
 
 
 @mcp.tool(
@@ -181,7 +234,7 @@ async def debate_join(
 async def debate_position(session_id: str, content: str) -> dict:
     """Submit a position from a session."""
     svc = await _init()
-    return await svc.submit_position(session_id, content)
+    return await svc.submit_position(session_id, content, owner_id=_current_owner())
 
 
 @mcp.tool(
@@ -191,7 +244,7 @@ async def debate_position(session_id: str, content: str) -> dict:
 async def debate_challenge(session_id: str, content: str, action: str = "challenge") -> dict:
     """Submit a challenge to another session's position."""
     svc = await _init()
-    return await svc.submit_challenge(session_id, content, action)
+    return await svc.submit_challenge(session_id, content, action, owner_id=_current_owner())
 
 
 @mcp.tool(
@@ -206,7 +259,7 @@ async def debate_challenge(session_id: str, content: str, action: str = "challen
 async def debate_converge(debate_id: str) -> dict:
     """Trigger convergence analysis for a debate."""
     svc = await _init()
-    return await svc.converge(debate_id)
+    return await svc.converge(debate_id, owner_id=_current_owner())
 
 
 @mcp.tool(
@@ -216,7 +269,7 @@ async def debate_converge(debate_id: str) -> dict:
 async def debate_cancel(debate_id: str) -> dict:
     """Cancel a debate in progress."""
     svc = await _init()
-    return await svc.cancel(debate_id)
+    return await svc.cancel(debate_id, owner_id=_current_owner())
 
 
 @mcp.tool(
@@ -226,7 +279,7 @@ async def debate_cancel(debate_id: str) -> dict:
 async def debate_delete(debate_id: str) -> dict:
     """Permanently delete a debate and all its data."""
     svc = await _init()
-    return await svc.delete(debate_id)
+    return await svc.delete(debate_id, owner_id=_current_owner())
 
 
 @mcp.tool(
@@ -236,7 +289,7 @@ async def debate_delete(debate_id: str) -> dict:
 async def debate_status(debate_id: str) -> dict:
     """Get current state of a debate."""
     svc = await _init()
-    return await svc.status(debate_id)
+    return await svc.status(debate_id, owner_id=_current_owner())
 
 
 @mcp.tool(
@@ -246,7 +299,7 @@ async def debate_status(debate_id: str) -> dict:
 async def debate_history(limit: int = 50) -> dict:
     """Retrieve past debates and their outcomes."""
     svc = await _init()
-    return await svc.history(limit)
+    return await svc.history(limit, owner_id=_current_owner())
 
 
 @mcp.tool(
@@ -269,6 +322,7 @@ async def debate_solo(
     and submits the texts here. No external API key required.
     """
     svc = await _init()
+    owner = _current_owner()
     return await svc.run_solo(
         prompt=prompt,
         deep_position=deep_position,
@@ -278,6 +332,8 @@ async def debate_solo(
         context_documents=context_documents,
         deep_label=deep_label,
         fresh_label=fresh_label,
+        tenant=owner or "global",
+        owner_id=owner,
     )
 
 
@@ -307,6 +363,7 @@ async def debate_auto(
     and returns the convergence result.
     """
     svc = await _init()
+    owner = _current_owner()
     return await svc.run_auto(
         prompt=prompt,
         context_documents=context_documents,
@@ -321,6 +378,8 @@ async def debate_auto(
         language=language,
         deep_model=deep_model,
         fresh_model=fresh_model,
+        tenant=owner or "global",
+        owner_id=owner,
     )
 
 
@@ -339,7 +398,7 @@ async def debate_review(
     is one of 'approve', 'override', or 'reject'.
     """
     svc = await _init()
-    return await svc.review(debate_id, action, override_content)
+    return await svc.review(debate_id, action, override_content, owner_id=_current_owner())
 
 
 # ---------------------------------------------------------------------------

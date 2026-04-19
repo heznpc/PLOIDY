@@ -107,6 +107,10 @@ class DebateService:
         self.session_to_debate: dict[str, str] = {}
         self.debate_locks: dict[str, asyncio.Lock] = {}
         self.paused_debates: dict[str, dict] = {}
+        # None entries keep legacy (unscoped) debates accessible to any caller
+        # so existing databases stay usable; new rows that carry an owner_id
+        # are strictly enforced on every lookup.
+        self.debate_owners: dict[str, str | None] = {}
 
         self._initialized = False
 
@@ -130,6 +134,7 @@ class DebateService:
         self.session_to_debate.clear()
         self.debate_locks.clear()
         self.paused_debates.clear()
+        self.debate_owners.clear()
         self._initialized = False
 
     # ------------------------------------------------------------------
@@ -153,10 +158,29 @@ class DebateService:
     def _cleanup_debate(self, debate_id: str) -> None:
         self.protocols.pop(debate_id, None)
         self.debate_locks.pop(debate_id, None)
+        self.debate_owners.pop(debate_id, None)
         session_ids = self.debate_sessions.pop(debate_id, [])
         for sid in session_ids:
             self.sessions.pop(sid, None)
             self.session_to_debate.pop(sid, None)
+
+    def _require_owner(self, debate_id: str, caller: str | None) -> None:
+        """Raise PloidyError if ``caller`` is not allowed to touch the debate.
+
+        Legacy (unscoped) debates — ``owner_id=None`` — are visible to every
+        caller so single-tenant deployments and tests don't break. Once a
+        debate has an owner, only that owner passes.
+        """
+        if debate_id not in self.debate_owners:
+            # Not yet hydrated — happens when the caller looks up a debate
+            # that only exists in the database (e.g. after a restart before
+            # recovery touched it). Hide it behind the normal not-found path.
+            raise PloidyError(f"Debate {debate_id} not found")
+        owner = self.debate_owners[debate_id]
+        if owner is None:
+            return
+        if caller != owner:
+            raise PloidyError(f"Debate {debate_id} not found")
 
     async def _delete_failed_debate(self, debate_id: str) -> None:
         self._cleanup_debate(debate_id)
@@ -252,6 +276,7 @@ class DebateService:
             self.protocols[debate_id] = protocol
             self.debate_sessions[debate_id] = session_ids
             self.debate_locks[debate_id] = asyncio.Lock()
+            self.debate_owners[debate_id] = debate.get("owner_id")
             recovered += 1
 
         if recovered:
@@ -306,6 +331,7 @@ class DebateService:
             self.protocols[debate_id] = protocol
             self.debate_sessions[debate_id] = session_ids
             self.debate_locks[debate_id] = asyncio.Lock()
+            self.debate_owners[debate_id] = debate.get("owner_id")
             self.paused_debates[debate_id] = paused_ctx
             paused_recovered += 1
 
@@ -362,6 +388,7 @@ class DebateService:
         protocol = DebateProtocol(debate_id, prompt)
         self.protocols[debate_id] = protocol
         self.debate_locks[debate_id] = asyncio.Lock()
+        self.debate_owners[debate_id] = owner_id
 
         logger.info("Debate started: %s by session %s", debate_id, deep_id)
 
@@ -379,10 +406,13 @@ class DebateService:
         debate_id: str,
         role: str = "fresh",
         delivery_mode: str = "none",
+        *,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         protocol = self.protocols.get(debate_id)
         if protocol is None:
             raise PloidyError(f"Debate {debate_id} not found")
+        self._require_owner(debate_id, owner_id)
 
         current_count = len(self.debate_sessions.get(debate_id, []))
         if current_count >= self.max_sessions_per_debate:
@@ -437,13 +467,16 @@ class DebateService:
             "prompt": protocol.prompt,
         }
 
-    async def submit_position(self, session_id: str, content: str) -> dict[str, Any]:
+    async def submit_position(
+        self, session_id: str, content: str, *, owner_id: str | None = None
+    ) -> dict[str, Any]:
         self._validate_length(content, self.max_content_len, "content")
 
         if session_id not in self.sessions:
             raise SessionError(f"Session {session_id} not found")
 
         debate_id = self._find_debate(session_id)
+        self._require_owner(debate_id, owner_id)
         lock = self._get_lock(debate_id)
 
         async with lock:
@@ -483,7 +516,12 @@ class DebateService:
         }
 
     async def submit_challenge(
-        self, session_id: str, content: str, action: str = "challenge"
+        self,
+        session_id: str,
+        content: str,
+        action: str = "challenge",
+        *,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         self._validate_length(content, self.max_content_len, "content")
 
@@ -491,6 +529,7 @@ class DebateService:
             raise SessionError(f"Session {session_id} not found")
 
         debate_id = self._find_debate(session_id)
+        self._require_owner(debate_id, owner_id)
         lock = self._get_lock(debate_id)
 
         async with lock:
@@ -528,10 +567,11 @@ class DebateService:
             "content_length": len(content),
         }
 
-    async def converge(self, debate_id: str) -> dict[str, Any]:
+    async def converge(self, debate_id: str, *, owner_id: str | None = None) -> dict[str, Any]:
         protocol = self.protocols.get(debate_id)
         if protocol is None:
             raise PloidyError(f"Debate {debate_id} not found")
+        self._require_owner(debate_id, owner_id)
 
         lock = self._get_lock(debate_id)
 
@@ -593,10 +633,11 @@ class DebateService:
             ],
         }
 
-    async def cancel(self, debate_id: str) -> dict[str, Any]:
+    async def cancel(self, debate_id: str, *, owner_id: str | None = None) -> dict[str, Any]:
         protocol = self.protocols.get(debate_id)
         if protocol is None:
             raise PloidyError(f"Debate {debate_id} not found")
+        self._require_owner(debate_id, owner_id)
 
         if protocol.phase == DebatePhase.COMPLETE:
             raise ProtocolError("Cannot cancel a completed debate")
@@ -620,10 +661,11 @@ class DebateService:
 
         return {"debate_id": debate_id, "status": "deleted"}
 
-    async def status(self, debate_id: str) -> dict[str, Any]:
+    async def status(self, debate_id: str, *, owner_id: str | None = None) -> dict[str, Any]:
         protocol = self.protocols.get(debate_id)
         if protocol is None:
             raise PloidyError(f"Debate {debate_id} not found")
+        self._require_owner(debate_id, owner_id)
 
         session_ids = self.debate_sessions.get(debate_id, [])
         sessions_info = []
@@ -741,6 +783,7 @@ class DebateService:
                 protocol = DebateProtocol(debate_id, prompt)
                 self.protocols[debate_id] = protocol
                 self.debate_locks[debate_id] = asyncio.Lock()
+                self.debate_owners[debate_id] = owner_id
 
                 protocol.advance_phase()
                 for sid, content in ((deep_id, deep_position), (fresh_id, fresh_position)):
@@ -960,6 +1003,7 @@ class DebateService:
         self.protocols[debate_id] = protocol
         self.debate_locks[debate_id] = asyncio.Lock()
         self.debate_sessions[debate_id] = []
+        self.debate_owners[debate_id] = owner_id
 
         deep_sessions: list[SessionContext] = []
         for i in range(deep_n):
@@ -1286,9 +1330,12 @@ class DebateService:
         debate_id: str,
         action: str = "approve",
         override_content: str | None = None,
+        *,
+        owner_id: str | None = None,
     ) -> dict[str, Any]:
         if debate_id not in self.paused_debates:
             raise PloidyError(f"Debate {debate_id} is not paused or does not exist")
+        self._require_owner(debate_id, owner_id)
 
         if action not in ("approve", "override", "reject"):
             raise ProtocolError(
