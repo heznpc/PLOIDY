@@ -16,22 +16,14 @@ from ploidy import server
 
 @pytest.fixture(autouse=True)
 async def _reset_state():
-    """Reset module-level state between tests."""
-    server._store = None
-    server._protocols.clear()
-    server._sessions.clear()
-    server._debate_sessions.clear()
-    server._session_to_debate.clear()
-    server._debate_locks.clear()
+    """Drop the shared DebateService between tests."""
+    if server._service is not None:
+        await server._service.shutdown()
+    server._service = None
     yield
-    if server._store is not None:
-        await server._store.close()
-        server._store = None
-    server._protocols.clear()
-    server._sessions.clear()
-    server._debate_sessions.clear()
-    server._session_to_debate.clear()
-    server._debate_locks.clear()
+    if server._service is not None:
+        await server._service.shutdown()
+    server._service = None
 
 
 async def test_full_debate_flow():
@@ -228,7 +220,7 @@ async def test_cancelled_debate_is_not_recovered():
     await server._init()
     history = await server.debate_history()
 
-    assert debate_id not in server._protocols
+    assert debate_id not in server._service.protocols
     assert any(d["id"] == debate_id and d["status"] == "cancelled" for d in history["debates"])
 
 
@@ -242,8 +234,8 @@ async def test_session_context_is_recovered():
 
     join = await server.debate_join(debate_id, role="semi_fresh", delivery_mode="active")
     semi_fresh_id = join["session_id"]
-    server._sessions[semi_fresh_id].compressed_summary = "compressed"
-    await server._store.update_session_context(
+    server._service.sessions[semi_fresh_id].compressed_summary = "compressed"
+    await server._service.store.update_session_context(
         semi_fresh_id,
         context_documents=[],
         delivery_mode="active",
@@ -254,7 +246,9 @@ async def test_session_context_is_recovered():
     await server.shutdown()
     await server._init()
 
-    sessions = {sid: ctx for sid, ctx in server._sessions.items() if sid.startswith(debate_id)}
+    sessions = {
+        sid: ctx for sid, ctx in server._service.sessions.items() if sid.startswith(debate_id)
+    }
     exp = next(ctx for ctx in sessions.values() if ctx.role.value == "deep")
     sf = next(ctx for ctx in sessions.values() if ctx.role.value == "semi_fresh")
 
@@ -270,7 +264,8 @@ async def test_recovered_session_preserves_effort_and_model():
     Regression: get_sessions() previously omitted these columns from
     its SELECT, so recovery silently dropped them.
     """
-    store = await server._init()
+    svc = await server._init()
+    store = svc.store
     debate_id = "rec-em-001"
     await store.save_debate(debate_id, "Recovery prompt")
 
@@ -288,7 +283,7 @@ async def test_recovered_session_preserves_effort_and_model():
     await server.shutdown()
     await server._init()
 
-    ctx = server._sessions.get(sid)
+    ctx = server._service.sessions.get(sid)
     assert ctx is not None, "session not recovered"
     assert ctx.model == "gpt-test-mini"
     assert ctx.effort.value == "max"
@@ -321,11 +316,11 @@ async def test_debate_solo_runs_without_api():
     debate_id = result["debate_id"]
     # _cleanup_debate must drop every map it touches; missing one would
     # leak server state across runs
-    assert debate_id not in server._protocols
-    assert debate_id not in server._debate_sessions
-    assert debate_id not in server._debate_locks
-    assert not any(sid.startswith(debate_id) for sid in server._sessions)
-    assert not any(sid.startswith(debate_id) for sid in server._session_to_debate)
+    assert debate_id not in server._service.protocols
+    assert debate_id not in server._service.debate_sessions
+    assert debate_id not in server._service.debate_locks
+    assert not any(sid.startswith(debate_id) for sid in server._service.sessions)
+    assert not any(sid.startswith(debate_id) for sid in server._service.session_to_debate)
 
     history = await server.debate_history()
     assert any(d["id"] == debate_id and d["status"] == "complete" for d in history["debates"])
@@ -389,7 +384,7 @@ async def test_debate_auto_generates_both_sides(monkeypatch):
     debate_id = result["debate_id"]
     assert any(d["id"] == debate_id and d["status"] == "complete" for d in history["debates"])
 
-    messages = await server._store.get_messages(debate_id)
+    messages = await server._service.store.get_messages(debate_id)
     position_messages = [m for m in messages if m["phase"] == "position"]
     challenge_messages = [m for m in messages if m["phase"] == "challenge"]
 

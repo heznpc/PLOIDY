@@ -14,8 +14,10 @@ Tables:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
@@ -90,6 +92,9 @@ _DEBATE_MIGRATIONS = (
         "config_json",
         "ALTER TABLE debates ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'",
     ),
+    # Multitenancy: NULL == unscoped legacy row. Filter on owner_id at the
+    # service layer; the column alone does not enforce isolation.
+    ("owner_id", "ALTER TABLE debates ADD COLUMN owner_id TEXT"),
 )
 
 _MESSAGE_MIGRATIONS = (
@@ -102,6 +107,7 @@ _CONVERGENCE_MIGRATIONS = (
 
 _CREATE_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_debates_status ON debates(status);
+CREATE INDEX IF NOT EXISTS idx_debates_owner ON debates(owner_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_debate_id ON sessions(debate_id);
 CREATE INDEX IF NOT EXISTS idx_messages_debate_id ON messages(debate_id);
 """
@@ -135,6 +141,10 @@ class DebateStore:
         """
         self.db_path = db_path or default_db_path()
         self._db: aiosqlite.Connection | None = None
+        # Serialises per-write commits across callers; SQLite already serialises
+        # writes at the file level but this keeps in-flight transactions coherent.
+        self._tx_lock = asyncio.Lock()
+        self._in_tx = False
 
     async def __aenter__(self) -> DebateStore:
         """Enter the async context manager -- open DB and create tables."""
@@ -167,6 +177,41 @@ class DebateStore:
         await self._db.executescript(_CREATE_INDEXES)
         await self._db.commit()
 
+    @asynccontextmanager
+    async def transaction(self):
+        """Batch every commit inside the block into a single SQLite transaction.
+
+        While the context is active, ``db.commit()`` calls from other store
+        methods become no-ops — the enclosing transaction commits on exit or
+        rolls back on exception. Nested ``transaction()`` calls reuse the
+        outermost transaction, so higher-level services can compose.
+        """
+        db = _require_db(self._db)
+        if self._in_tx:
+            # Nested call: defer commit/rollback to the outer transaction.
+            yield
+            return
+        async with self._tx_lock:
+            self._in_tx = True
+            try:
+                await db.execute("BEGIN")
+                try:
+                    yield
+                except Exception:
+                    await db.rollback()
+                    raise
+                else:
+                    await db.commit()
+            finally:
+                self._in_tx = False
+
+    async def _commit(self) -> None:
+        """Commit unless we're inside a batching ``transaction()`` block."""
+        db = _require_db(self._db)
+        if self._in_tx:
+            return
+        await db.commit()
+
     async def _migrate_schema(self) -> None:
         """Apply additive schema migrations for older databases."""
         db = _require_db(self._db)
@@ -187,55 +232,81 @@ class DebateStore:
     # Debates
     # ------------------------------------------------------------------
 
-    async def save_debate(self, debate_id: str, prompt: str, config: dict | None = None) -> None:
+    async def save_debate(
+        self,
+        debate_id: str,
+        prompt: str,
+        config: dict | None = None,
+        owner_id: str | None = None,
+    ) -> None:
         """Persist a new debate record.
 
         Args:
             debate_id: Unique identifier for the debate.
             prompt: The decision prompt for the debate.
             config: Optional debate configuration dict (ploidy, injection, etc.).
+            owner_id: Tenant/owner identifier for multitenant filtering.
+                NULL treats the debate as unscoped.
         """
         db = _require_db(self._db)
         await db.execute(
-            "INSERT INTO debates (id, prompt, config_json) VALUES (?, ?, ?)",
-            (debate_id, prompt, json.dumps(config or {})),
+            "INSERT INTO debates (id, prompt, config_json, owner_id) VALUES (?, ?, ?, ?)",
+            (debate_id, prompt, json.dumps(config or {}), owner_id),
         )
-        await db.commit()
+        await self._commit()
 
-    async def get_debate(self, debate_id: str) -> dict | None:
+    async def get_debate(self, debate_id: str, owner_id: str | None = None) -> dict | None:
         """Retrieve a debate by its ID.
 
         Args:
             debate_id: The debate to look up.
+            owner_id: When set, enforce that the debate belongs to this owner.
 
         Returns:
-            Debate record as a dict, or None if not found.
+            Debate record as a dict, or None if not found (or owned by someone else).
         """
         db = _require_db(self._db)
-        cursor = await db.execute(
-            "SELECT id, prompt, status, created_at, updated_at FROM debates WHERE id = ?",
-            (debate_id,),
-        )
+        if owner_id is None:
+            cursor = await db.execute(
+                "SELECT id, prompt, status, owner_id, created_at, updated_at "
+                "FROM debates WHERE id = ?",
+                (debate_id,),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT id, prompt, status, owner_id, created_at, updated_at "
+                "FROM debates WHERE id = ? AND owner_id = ?",
+                (debate_id, owner_id),
+            )
         row = await cursor.fetchone()
         if row is None:
             return None
         return dict(row)
 
-    async def list_debates(self, limit: int = 50) -> list[dict]:
+    async def list_debates(self, limit: int = 50, owner_id: str | None = None) -> list[dict]:
         """List recent debates.
 
         Args:
             limit: Maximum number of debates to return.
+            owner_id: When set, restrict to debates owned by this id.
 
         Returns:
             List of debate records, most recent first.
         """
         db = _require_db(self._db)
-        cursor = await db.execute(
-            "SELECT id, prompt, status, created_at, updated_at "
-            "FROM debates ORDER BY created_at DESC LIMIT ?",
-            (min(limit, 200),),
-        )
+        if owner_id is None:
+            cursor = await db.execute(
+                "SELECT id, prompt, status, owner_id, created_at, updated_at "
+                "FROM debates ORDER BY created_at DESC LIMIT ?",
+                (min(limit, 200),),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT id, prompt, status, owner_id, created_at, updated_at "
+                "FROM debates WHERE owner_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (owner_id, min(limit, 200)),
+            )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
@@ -243,11 +314,11 @@ class DebateStore:
         """List active debates for state recovery.
 
         Returns:
-            List of active debate records.
+            List of active debate records (all owners — recovery is global).
         """
         db = _require_db(self._db)
         cursor = await db.execute(
-            "SELECT id, prompt, status, created_at, updated_at "
+            "SELECT id, prompt, status, owner_id, created_at, updated_at "
             "FROM debates WHERE status = 'active' ORDER BY created_at",
         )
         rows = await cursor.fetchall()
@@ -265,7 +336,7 @@ class DebateStore:
             "UPDATE debates SET status = ?, updated_at = datetime('now') WHERE id = ?",
             (status, debate_id),
         )
-        await db.commit()
+        await self._commit()
 
     async def save_paused_context(self, debate_id: str, context: dict) -> None:
         """Persist paused auto-debate context alongside the debate record.
@@ -281,7 +352,7 @@ class DebateStore:
             "UPDATE debates SET paused_context = ?, updated_at = datetime('now') WHERE id = ?",
             (json.dumps(context), debate_id),
         )
-        await db.commit()
+        await self._commit()
 
     async def load_paused_context(self, debate_id: str) -> dict | None:
         """Load persisted paused context for a debate.
@@ -313,7 +384,7 @@ class DebateStore:
             "UPDATE debates SET paused_context = NULL, updated_at = datetime('now') WHERE id = ?",
             (debate_id,),
         )
-        await db.commit()
+        await self._commit()
 
     async def list_paused_debates(self) -> list[dict]:
         """List paused debates for state recovery.
@@ -375,7 +446,7 @@ class DebateStore:
                 effort,
             ),
         )
-        await db.commit()
+        await self._commit()
 
     async def get_sessions(self, debate_id: str) -> list[dict]:
         """Retrieve all sessions for a debate.
@@ -423,7 +494,7 @@ class DebateStore:
                 session_id,
             ),
         )
-        await db.commit()
+        await self._commit()
 
     # ------------------------------------------------------------------
     # Messages
@@ -452,7 +523,7 @@ class DebateStore:
             "VALUES (?, ?, ?, ?, ?)",
             (debate_id, session_id, phase, content, action),
         )
-        await db.commit()
+        await self._commit()
 
     async def get_messages(self, debate_id: str) -> list[dict]:
         """Retrieve all messages for a debate, ordered by creation time.
@@ -500,7 +571,7 @@ class DebateStore:
             "VALUES (?, ?, ?, ?, ?)",
             (debate_id, synthesis, confidence, points_json, meta_analysis),
         )
-        await db.commit()
+        await self._commit()
 
     async def get_convergence(self, debate_id: str) -> dict | None:
         """Retrieve the convergence result for a debate.
@@ -554,7 +625,7 @@ class DebateStore:
             "UPDATE debates SET status = 'complete', updated_at = datetime('now') WHERE id = ?",
             (debate_id,),
         )
-        await db.commit()
+        await self._commit()
 
     async def delete_debate(self, debate_id: str) -> None:
         """Permanently delete a debate and all associated data.
@@ -569,7 +640,7 @@ class DebateStore:
         await db.execute("DELETE FROM convergence WHERE debate_id = ?", (debate_id,))
         await db.execute("DELETE FROM sessions WHERE debate_id = ?", (debate_id,))
         await db.execute("DELETE FROM debates WHERE id = ?", (debate_id,))
-        await db.commit()
+        await self._commit()
 
     async def close(self) -> None:
         """Close the database connection."""
