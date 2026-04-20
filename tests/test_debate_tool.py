@@ -39,8 +39,19 @@ async def test_solo_dispatch_completes_with_convergence():
 
 
 async def test_solo_requires_both_positions():
-    with pytest.raises(ValueError, match="requires both deep_position and fresh_position"):
+    with pytest.raises(ValueError, match="requires a non-empty fresh_position"):
         await server.debate(prompt="x", mode="solo", deep_position="only one")
+
+
+async def test_solo_rejects_blank_position():
+    """Whitespace-only positions should be caught at the tool boundary."""
+    with pytest.raises(ValueError, match="requires a non-empty deep_position"):
+        await server.debate(
+            prompt="x",
+            mode="solo",
+            deep_position="   \n\t  ",
+            fresh_position="actual content",
+        )
 
 
 async def test_auto_rejects_solo_only_params():

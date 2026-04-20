@@ -60,3 +60,14 @@ Render the tool response like this:
 
 Do not dump the raw JSON. Do not re-explain Ploidy. Do not ask
 follow-up questions before presenting step 4.
+
+## If something fails
+
+- **Subagent refuses or returns empty** — rerun step 2 once with a
+  tighter prompt. If it still fails, fall back to mode="auto" (needs
+  `PLOIDY_API_BASE_URL`) or ask the user to provide the fresh
+  perspective manually.
+- **`debate` tool returns an error** — show the error verbatim, name
+  the likely cause (usually a missing position or an API-key misconfig),
+  and stop. Do not silently retry — that burns tokens without
+  addressing the root cause.

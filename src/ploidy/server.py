@@ -28,8 +28,8 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from ploidy.lockprovider import AsyncLockProvider, LockProvider, RedisLockProvider
+from ploidy.logctx import deprecated, traced
 from ploidy.logctx import install as install_logctx
-from ploidy.logctx import traced
 from ploidy.ratelimit import TokenBucketLimiter
 from ploidy.service import DebateService
 from ploidy.store import DebateStore
@@ -308,8 +308,13 @@ async def debate(
     owner = _current_owner()
 
     if mode == "solo":
-        if not deep_position or not fresh_position:
-            raise ValueError("debate(mode='solo') requires both deep_position and fresh_position")
+        # Treat None and blank strings symmetrically — a whitespace-only
+        # position is almost certainly a caller mistake and would fail
+        # convergence later with a less informative error.
+        if not (deep_position and deep_position.strip()):
+            raise ValueError("debate(mode='solo') requires a non-empty deep_position")
+        if not (fresh_position and fresh_position.strip()):
+            raise ValueError("debate(mode='solo') requires a non-empty fresh_position")
         return await svc.run_solo(
             prompt=prompt,
             deep_position=deep_position,
@@ -358,11 +363,10 @@ async def debate(
 @mcp.tool(
     annotations=ToolAnnotations(destructiveHint=True, readOnlyHint=False, idempotentHint=False),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_start(prompt: str, context_documents: list[str] | None = None) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Begin a new debate session with a decision prompt.
+    """Begin a new debate session with a decision prompt.
 
     Creates a debate and a Deep (full-context) session.
     Share the returned debate_id with the fresh session so it can join.
@@ -377,15 +381,14 @@ async def debate_start(prompt: str, context_documents: list[str] | None = None) 
 @mcp.tool(
     annotations=ToolAnnotations(destructiveHint=False, readOnlyHint=False, idempotentHint=False),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_join(
     debate_id: str,
     role: str = "fresh",
     delivery_mode: str = "none",
 ) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Join an existing debate as a fresh or semi-fresh session."""
+    """Join an existing debate as a fresh or semi-fresh session."""
     svc = await _init()
     return await svc.join_debate(debate_id, role, delivery_mode, owner_id=_current_owner())
 
@@ -393,11 +396,10 @@ async def debate_join(
 @mcp.tool(
     annotations=ToolAnnotations(destructiveHint=False, readOnlyHint=False, idempotentHint=False),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_position(session_id: str, content: str) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Submit a position from a session."""
+    """Submit a position from a session."""
     svc = await _init()
     return await svc.submit_position(session_id, content, owner_id=_current_owner())
 
@@ -405,11 +407,10 @@ async def debate_position(session_id: str, content: str) -> dict:
 @mcp.tool(
     annotations=ToolAnnotations(destructiveHint=False, readOnlyHint=False, idempotentHint=False),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_challenge(session_id: str, content: str, action: str = "challenge") -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Submit a challenge to another session's position."""
+    """Submit a challenge to another session's position."""
     svc = await _init()
     return await svc.submit_challenge(session_id, content, action, owner_id=_current_owner())
 
@@ -422,11 +423,10 @@ async def debate_challenge(session_id: str, content: str, action: str = "challen
         openWorldHint=False,
     ),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_converge(debate_id: str) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Trigger convergence analysis for a debate."""
+    """Trigger convergence analysis for a debate."""
     svc = await _init()
     return await svc.converge(debate_id, owner_id=_current_owner())
 
@@ -434,11 +434,10 @@ async def debate_converge(debate_id: str) -> dict:
 @mcp.tool(
     annotations=ToolAnnotations(destructiveHint=True, readOnlyHint=False, idempotentHint=True),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_cancel(debate_id: str) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Cancel a debate in progress."""
+    """Cancel a debate in progress."""
     svc = await _init()
     return await svc.cancel(debate_id, owner_id=_current_owner())
 
@@ -446,11 +445,10 @@ async def debate_cancel(debate_id: str) -> dict:
 @mcp.tool(
     annotations=ToolAnnotations(destructiveHint=True, readOnlyHint=False, idempotentHint=True),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_delete(debate_id: str) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Permanently delete a debate and all its data."""
+    """Permanently delete a debate and all its data."""
     svc = await _init()
     return await svc.delete(debate_id, owner_id=_current_owner())
 
@@ -458,11 +456,10 @@ async def debate_delete(debate_id: str) -> dict:
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_status(debate_id: str) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Get current state of a debate."""
+    """Get current state of a debate."""
     svc = await _init()
     return await svc.status(debate_id, owner_id=_current_owner())
 
@@ -470,11 +467,10 @@ async def debate_status(debate_id: str) -> dict:
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_history(limit: int = 50) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Retrieve past debates and their outcomes."""
+    """Retrieve past debates and their outcomes."""
     svc = await _init()
     return await svc.history(limit, owner_id=_current_owner())
 
@@ -482,6 +478,7 @@ async def debate_history(limit: int = 50) -> dict:
 @mcp.tool(
     annotations=ToolAnnotations(destructiveHint=True, readOnlyHint=False, idempotentHint=False),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_solo(
     prompt: str,
@@ -493,9 +490,7 @@ async def debate_solo(
     deep_label: str = "Deep",
     fresh_label: str = "Fresh",
 ) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Run a complete debate from caller-supplied positions in one call.
+    """Run a complete debate from caller-supplied positions in one call.
 
     Single-terminal entry point: the caller generates both sides locally
     and submits the texts here. No external API key required.
@@ -519,6 +514,7 @@ async def debate_solo(
 @mcp.tool(
     annotations=ToolAnnotations(destructiveHint=True, readOnlyHint=False, idempotentHint=False),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_auto(
     prompt: str,
@@ -535,9 +531,7 @@ async def debate_auto(
     deep_model: str | None = None,
     fresh_model: str | None = None,
 ) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Run a complete debate automatically in a single command.
+    """Run a complete debate automatically in a single command.
 
     Requires PLOIDY_API_BASE_URL to be configured. Generates positions
     and challenges via an OpenAI-compatible endpoint, runs the protocol,
@@ -567,15 +561,14 @@ async def debate_auto(
 @mcp.tool(
     annotations=ToolAnnotations(destructiveHint=False, readOnlyHint=False, idempotentHint=False),
 )
+@deprecated(version="0.4", prefer="``debate(prompt, mode=...)``")
 @traced
 async def debate_review(
     debate_id: str,
     action: str = "approve",
     override_content: str | None = None,
 ) -> dict:
-    """DEPRECATED (v0.4) — prefer ``debate(prompt, mode=...)``.
-
-    Review and resume a paused auto-debate (HITL).
+    """Review and resume a paused auto-debate (HITL).
 
     Call after ``debate_auto`` with ``pause_at`` paused the run. Action
     is one of 'approve', 'override', or 'reject'.

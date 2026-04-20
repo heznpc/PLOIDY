@@ -65,6 +65,23 @@ def get_request_id() -> str:
     return _request_id.get()
 
 
+def deprecated(*, version: str, prefer: str):
+    """Prepend a one-line deprecation notice to the wrapped callable's ``__doc__``.
+
+    FastMCP surfaces ``__doc__`` as the tool description that LLM clients read,
+    so editing it in one place (the decorator) keeps the 12 legacy debate tools
+    in sync without duplicating the same sentence into every docstring.
+    """
+    prefix = f"DEPRECATED (v{version}) — prefer {prefer}."
+
+    def decorator(fn):
+        existing = fn.__doc__ or ""
+        fn.__doc__ = prefix + "\n\n    " + existing.lstrip() if existing else prefix
+        return fn
+
+    return decorator
+
+
 def traced(fn):
     """Decorator that runs an async callable inside a correlation scope.
 
