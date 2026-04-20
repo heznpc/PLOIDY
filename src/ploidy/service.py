@@ -46,6 +46,10 @@ _RECOVERY_ROLE_MAP = {
     "fresh": SessionRole.FRESH,
 }
 
+# Distinct from ``None`` (which is a valid "unscoped" owner) so
+# dict.get can differentiate "not cached" from "owned by nobody".
+_SENTINEL_UNKNOWN: object = object()
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -117,7 +121,6 @@ class DebateService:
         self.sessions: dict[str, SessionContext] = {}
         self.debate_sessions: dict[str, list[str]] = {}
         self.session_to_debate: dict[str, str] = {}
-        self.debate_locks: dict[str, asyncio.Lock] = {}
         self.paused_debates: dict[str, dict] = {}
         # None entries keep legacy (unscoped) debates accessible to any caller
         # so existing databases stay usable; new rows that carry an owner_id
@@ -157,7 +160,6 @@ class DebateService:
         self.sessions.clear()
         self.debate_sessions.clear()
         self.session_to_debate.clear()
-        self.debate_locks.clear()
         self.paused_debates.clear()
         self.debate_owners.clear()
         self._initialized = False
@@ -214,10 +216,6 @@ class DebateService:
         still key ``asyncio.Lock`` objects atomically via ``dict.setdefault``
         and distributed instances spin a Redis SET NX lock.
         """
-        # debate_locks remains as a per-service tracker so
-        # cleanup assertions keep working; the actual lock lives in the
-        # provider.
-        self.debate_locks[debate_id] = True
         return self.lock_provider.lock(debate_id)
 
     def _validate_length(self, text: str, max_len: int, field: str) -> None:
@@ -226,8 +224,11 @@ class DebateService:
 
     def _cleanup_debate(self, debate_id: str) -> None:
         self.protocols.pop(debate_id, None)
-        self.debate_locks.pop(debate_id, None)
         self.debate_owners.pop(debate_id, None)
+        # Local providers hold one asyncio.Lock per key and leak memory if we
+        # never drop them; Redis provider is keyless and ignores the hint.
+        if isinstance(self.lock_provider, AsyncLockProvider):
+            self.lock_provider.pop(debate_id)
         session_ids = self.debate_sessions.pop(debate_id, [])
         for sid in session_ids:
             self.sessions.pop(sid, None)
@@ -241,6 +242,58 @@ class DebateService:
             metrics().rate_limit_rejections.labels(tenant=tenant).inc()
             raise
 
+    @staticmethod
+    def _resolve_tenant(tenant: str | None, owner_id: str | None) -> str:
+        """Collapse (tenant, owner_id) into the single key used for limits/metrics."""
+        return tenant or owner_id or "global"
+
+    async def _provision_sessions(
+        self,
+        *,
+        debate_id: str,
+        count: int,
+        role: SessionRole,
+        persisted_role: str,
+        prompt: str,
+        context_documents: list[str],
+        delivery_mode: DeliveryMode,
+        effort: str,
+        effort_level: EffortLevel,
+        model: str | None,
+        prefix: str,
+    ) -> list[SessionContext]:
+        """Create and persist ``count`` sessions of one role.
+
+        Centralises the shape that ``run_auto`` applied twice (once for
+        deep, once for fresh/semi-fresh) — identifier minting, session
+        context construction, DB row insertion, and in-memory bookkeeping.
+        """
+        created: list[SessionContext] = []
+        save_kwargs: dict[str, Any] = {
+            "delivery_mode": delivery_mode.value,
+            "model": model,
+            "effort": effort,
+        }
+        if context_documents:
+            save_kwargs["context_documents"] = context_documents
+        for i in range(count):
+            sid = f"{debate_id}-{prefix}-{i}-{uuid.uuid4().hex[:6]}"
+            ctx = SessionContext(
+                session_id=sid,
+                role=role,
+                base_prompt=prompt,
+                context_documents=context_documents,
+                delivery_mode=delivery_mode,
+                effort=effort_level,
+                model=model,
+            )
+            await self.store.save_session(sid, debate_id, persisted_role, prompt, **save_kwargs)
+            self.sessions[sid] = ctx
+            self.debate_sessions[debate_id].append(sid)
+            self.session_to_debate[sid] = debate_id
+            created.append(ctx)
+        return created
+
     def _require_owner(self, debate_id: str, caller: str | None) -> None:
         """Raise PloidyError if ``caller`` is not allowed to touch the debate.
 
@@ -248,12 +301,13 @@ class DebateService:
         caller so single-tenant deployments and tests don't break. Once a
         debate has an owner, only that owner passes.
         """
-        if debate_id not in self.debate_owners:
-            # Not yet hydrated — happens when the caller looks up a debate
-            # that only exists in the database (e.g. after a restart before
-            # recovery touched it). Hide it behind the normal not-found path.
+        owner = self.debate_owners.get(debate_id, _SENTINEL_UNKNOWN)
+        if owner is _SENTINEL_UNKNOWN:
+            # Cache miss — the debate may live only in the database (cold
+            # replica, pre-hydration recovery path). Hide the miss behind a
+            # not-found error; callers surface the row via explicit store
+            # lookups if they need the DB-only path.
             raise PloidyError(f"Debate {debate_id} not found")
-        owner = self.debate_owners[debate_id]
         if owner is None:
             return
         if caller != owner:
@@ -425,7 +479,7 @@ class DebateService:
         tenant: str | None = None,
         owner_id: str | None = None,
     ) -> dict[str, Any]:
-        tenant = tenant or owner_id or "global"
+        tenant = self._resolve_tenant(tenant, owner_id)
         await self._acquire_or_count(tenant)
         self._validate_length(prompt, self.max_prompt_len, "prompt")
         docs = context_documents or []
@@ -810,7 +864,7 @@ class DebateService:
         tenant: str | None = None,
         owner_id: str | None = None,
     ) -> dict[str, Any]:
-        tenant = tenant or owner_id or "global"
+        tenant = self._resolve_tenant(tenant, owner_id)
         await self._acquire_or_count(tenant)
         self._validate_length(prompt, self.max_prompt_len, "prompt")
         self._validate_length(deep_position, self.max_content_len, "deep_position")
@@ -991,7 +1045,7 @@ class DebateService:
         tenant: str | None = None,
         owner_id: str | None = None,
     ) -> dict[str, Any]:
-        tenant = tenant or owner_id or "global"
+        tenant = self._resolve_tenant(tenant, owner_id)
         await self._acquire_or_count(tenant, cost=float(deep_n + fresh_n))
         try:
             from ploidy.api_client import (
@@ -1100,59 +1154,32 @@ class DebateService:
         self.debate_sessions[debate_id] = []
         self.debate_owners[debate_id] = owner_id
 
-        deep_sessions: list[SessionContext] = []
-        for i in range(deep_n):
-            sid = f"{debate_id}-deep-{i}-{uuid.uuid4().hex[:6]}"
-            ctx = SessionContext(
-                session_id=sid,
-                role=SessionRole.DEEP,
-                base_prompt=prompt,
-                context_documents=docs,
-                delivery_mode=DeliveryMode.PASSIVE,
-                effort=effort_level,
-                model=deep_model,
-            )
-            await self.store.save_session(
-                sid,
-                debate_id,
-                "deep",
-                prompt,
-                context_documents=docs,
-                delivery_mode="passive",
-                model=deep_model,
-                effort=effort,
-            )
-            self.sessions[sid] = ctx
-            self.debate_sessions[debate_id].append(sid)
-            self.session_to_debate[sid] = debate_id
-            deep_sessions.append(ctx)
-
-        fresh_sessions: list[SessionContext] = []
-        prefix = "sf" if auto_role == SessionRole.SEMI_FRESH else "fresh"
-        for i in range(fresh_n):
-            sid = f"{debate_id}-{prefix}-{i}-{uuid.uuid4().hex[:6]}"
-            ctx = SessionContext(
-                session_id=sid,
-                role=auto_role,
-                base_prompt=prompt,
-                context_documents=[],
-                delivery_mode=dm,
-                effort=effort_level,
-                model=fresh_model,
-            )
-            await self.store.save_session(
-                sid,
-                debate_id,
-                fresh_role,
-                prompt,
-                delivery_mode=dm.value,
-                model=fresh_model,
-                effort=effort,
-            )
-            self.sessions[sid] = ctx
-            self.debate_sessions[debate_id].append(sid)
-            self.session_to_debate[sid] = debate_id
-            fresh_sessions.append(ctx)
+        deep_sessions = await self._provision_sessions(
+            debate_id=debate_id,
+            count=deep_n,
+            role=SessionRole.DEEP,
+            persisted_role="deep",
+            prompt=prompt,
+            context_documents=docs,
+            delivery_mode=DeliveryMode.PASSIVE,
+            effort=effort,
+            effort_level=effort_level,
+            model=deep_model,
+            prefix="deep",
+        )
+        fresh_sessions = await self._provision_sessions(
+            debate_id=debate_id,
+            count=fresh_n,
+            role=auto_role,
+            persisted_role=fresh_role,
+            prompt=prompt,
+            context_documents=[],
+            delivery_mode=dm,
+            effort=effort,
+            effort_level=effort_level,
+            model=fresh_model,
+            prefix="sf" if auto_role == SessionRole.SEMI_FRESH else "fresh",
+        )
 
         logger.info(
             "Auto-debate %s: Deep(%d) x %s(%d), effort=%s, injection=%s",
@@ -1211,25 +1238,29 @@ class DebateService:
                     )
             fresh_positions = await asyncio.gather(*fresh_tasks)
 
-            for ctx, pos in zip(deep_sessions, deep_positions):
-                msg = DebateMessage(
-                    session_id=ctx.session_id,
-                    phase=DebatePhase.POSITION,
-                    content=pos,
-                    timestamp=_now(),
-                )
-                protocol.submit_message(msg)
-                await self.store.save_message(debate_id, ctx.session_id, "position", pos)
+            # Batch every position insert into one SQLite commit instead of
+            # 2N fsyncs. aiosqlite serialises writes on its single
+            # connection, so the wrapping transaction is the real win.
+            async with self.store.transaction():
+                for ctx, pos in zip(deep_sessions, deep_positions):
+                    msg = DebateMessage(
+                        session_id=ctx.session_id,
+                        phase=DebatePhase.POSITION,
+                        content=pos,
+                        timestamp=_now(),
+                    )
+                    protocol.submit_message(msg)
+                    await self.store.save_message(debate_id, ctx.session_id, "position", pos)
 
-            for ctx, pos in zip(fresh_sessions, fresh_positions):
-                msg = DebateMessage(
-                    session_id=ctx.session_id,
-                    phase=DebatePhase.POSITION,
-                    content=pos,
-                    timestamp=_now(),
-                )
-                protocol.submit_message(msg)
-                await self.store.save_message(debate_id, ctx.session_id, "position", pos)
+                for ctx, pos in zip(fresh_sessions, fresh_positions):
+                    msg = DebateMessage(
+                        session_id=ctx.session_id,
+                        phase=DebatePhase.POSITION,
+                        content=pos,
+                        timestamp=_now(),
+                    )
+                    protocol.submit_message(msg)
+                    await self.store.save_message(debate_id, ctx.session_id, "position", pos)
 
             if pause_at == "challenge":
                 paused_ctx = {
@@ -1291,39 +1322,40 @@ class DebateService:
             deep_action = _parse_dominant_action(deep_challenge)
             fresh_action = _parse_dominant_action(fresh_challenge)
 
-            for ctx in deep_sessions:
-                ch_msg = DebateMessage(
-                    session_id=ctx.session_id,
-                    phase=DebatePhase.CHALLENGE,
-                    content=deep_challenge,
-                    timestamp=_now(),
-                    action=deep_action,
-                )
-                protocol.submit_message(ch_msg)
-                await self.store.save_message(
-                    debate_id,
-                    ctx.session_id,
-                    "challenge",
-                    deep_challenge,
-                    deep_action.value,
-                )
+            async with self.store.transaction():
+                for ctx in deep_sessions:
+                    ch_msg = DebateMessage(
+                        session_id=ctx.session_id,
+                        phase=DebatePhase.CHALLENGE,
+                        content=deep_challenge,
+                        timestamp=_now(),
+                        action=deep_action,
+                    )
+                    protocol.submit_message(ch_msg)
+                    await self.store.save_message(
+                        debate_id,
+                        ctx.session_id,
+                        "challenge",
+                        deep_challenge,
+                        deep_action.value,
+                    )
 
-            for ctx in fresh_sessions:
-                ch_msg = DebateMessage(
-                    session_id=ctx.session_id,
-                    phase=DebatePhase.CHALLENGE,
-                    content=fresh_challenge,
-                    timestamp=_now(),
-                    action=fresh_action,
-                )
-                protocol.submit_message(ch_msg)
-                await self.store.save_message(
-                    debate_id,
-                    ctx.session_id,
-                    "challenge",
-                    fresh_challenge,
-                    fresh_action.value,
-                )
+                for ctx in fresh_sessions:
+                    ch_msg = DebateMessage(
+                        session_id=ctx.session_id,
+                        phase=DebatePhase.CHALLENGE,
+                        content=fresh_challenge,
+                        timestamp=_now(),
+                        action=fresh_action,
+                    )
+                    protocol.submit_message(ch_msg)
+                    await self.store.save_message(
+                        debate_id,
+                        ctx.session_id,
+                        "challenge",
+                        fresh_challenge,
+                        fresh_action.value,
+                    )
 
             if pause_at == "convergence":
                 paused_ctx = {

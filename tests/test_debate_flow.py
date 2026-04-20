@@ -318,7 +318,6 @@ async def test_debate_solo_runs_without_api():
     # leak server state across runs
     assert debate_id not in server._service.protocols
     assert debate_id not in server._service.debate_sessions
-    assert debate_id not in server._service.debate_locks
     assert not any(sid.startswith(debate_id) for sid in server._service.sessions)
     assert not any(sid.startswith(debate_id) for sid in server._service.session_to_debate)
 

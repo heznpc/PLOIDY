@@ -23,6 +23,7 @@ either lazily rehydrate from the database or adopt sticky routing.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Protocol
@@ -96,12 +97,12 @@ class RedisLockProvider:
     async def lock(self, key: str):
         redis_key = f"{self._prefix}{key}"
         token = uuid.uuid4().hex
-        deadline = asyncio.get_event_loop().time() + self._acquire_timeout
+        deadline = time.monotonic() + self._acquire_timeout
         while True:
             acquired = await self._client.set(redis_key, token, nx=True, px=self._ttl_ms)
             if acquired:
                 break
-            if asyncio.get_event_loop().time() > deadline:
+            if time.monotonic() > deadline:
                 raise TimeoutError(
                     f"RedisLockProvider: could not acquire {key} within {self._acquire_timeout}s"
                 )

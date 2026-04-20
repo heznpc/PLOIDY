@@ -646,32 +646,24 @@ class DebateStore:
         """Delete completed/cancelled debates whose updated_at < cutoff.
 
         Active and paused debates are preserved regardless of age so long
-        running sessions are never reaped.
+        running sessions are never reaped. Related messages, sessions, and
+        convergence rows are cleaned up by the ON DELETE CASCADE FK wired
+        into the schema.
 
         Args:
             cutoff_iso: ISO-8601 UTC timestamp. Rows older than this are
                 eligible for deletion.
 
         Returns:
-            Number of debate rows removed. Related messages, sessions, and
-            convergence rows are cascaded via DELETE statements in the same
-            transaction.
+            Number of debate rows removed.
         """
         db = _require_db(self._db)
         async with self.transaction():
             cursor = await db.execute(
-                "SELECT id FROM debates "
-                "WHERE status IN ('complete', 'cancelled') AND updated_at < ?",
+                "DELETE FROM debates WHERE status IN ('complete', 'cancelled') AND updated_at < ?",
                 (cutoff_iso,),
             )
-            rows = await cursor.fetchall()
-            debate_ids = [r["id"] for r in rows]
-            for did in debate_ids:
-                await db.execute("DELETE FROM messages WHERE debate_id = ?", (did,))
-                await db.execute("DELETE FROM convergence WHERE debate_id = ?", (did,))
-                await db.execute("DELETE FROM sessions WHERE debate_id = ?", (did,))
-                await db.execute("DELETE FROM debates WHERE id = ?", (did,))
-        return len(debate_ids)
+            return cursor.rowcount or 0
 
     async def vacuum(self) -> None:
         """Run ``VACUUM`` to reclaim space after a bulk delete.
