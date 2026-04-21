@@ -4,7 +4,7 @@ argument-hint: <decision question>
 ---
 
 The user asked you to run a context-asymmetric debate on a decision using
-Ploidy. Follow these four steps without asking the user to confirm —
+Ploidy. Follow the three steps below without asking the user to confirm —
 `/ploidy` is explicit consent to the whole flow.
 
 The decision prompt is: **$ARGUMENTS**
@@ -31,7 +31,7 @@ Prompt the subagent with:
 
 Capture the subagent's return text as the fresh position.
 
-## 3 · Converge via Ploidy
+## 3 · Converge and display
 
 Call the Ploidy MCP tool:
 
@@ -48,26 +48,25 @@ If your deep analysis flagged concerns the fresh side missed, add them
 as `deep_challenge`. If the fresh side surfaced something you
 rationalised away, write `fresh_challenge`. Both are optional.
 
-## 4 · Present the synthesis
+The tool response includes a `rendered_markdown` field that already
+formats the confidence headline, a collapsed synthesis, and the full
+transcript inside `<details>` blocks — the "answer first, expand for
+internals" shape. **Output that string verbatim as your final reply.**
+Do not rebuild the sections yourself, do not strip the `<details>`
+blocks, do not dump the raw JSON around it.
 
-Render the tool response like this:
-
-1. **Agreements** (confidence bar + the agreed points)
-2. **Productive disagreements** (each side's view + where the truth
-   probably lies)
-3. **Irreducible disagreements** (state them plainly; do not paper over)
-4. **Recommendation** — one paragraph the user can act on
-
-Do not dump the raw JSON. Do not re-explain Ploidy. Do not ask
-follow-up questions before presenting step 4.
+Do not ask follow-up questions before showing the markdown.
 
 ## If something fails
 
 - **Subagent refuses or returns empty** — rerun step 2 once with a
-  tighter prompt. If it still fails, fall back to mode="auto" (needs
+  tighter prompt. If it still fails, fall back to `mode="auto"` (needs
   `PLOIDY_API_BASE_URL`) or ask the user to provide the fresh
   perspective manually.
 - **`debate` tool returns an error** — show the error verbatim, name
   the likely cause (usually a missing position or an API-key misconfig),
   and stop. Do not silently retry — that burns tokens without
   addressing the root cause.
+- **Response has no `rendered_markdown` field** — you are talking to an
+  older Ploidy (< v0.4.1). Fall back to formatting from `synthesis` +
+  `points` manually, one section per category, confidence on top.
