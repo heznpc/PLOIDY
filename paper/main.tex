@@ -397,6 +397,8 @@ We note that the experiments in \S\ref{sec:experiments} use the \texttt{claude -
 
 \paragraph{Service vs research surfaces.} The 11-tool phase-state surface described above is the \emph{research protocol}: it exposes every phase transition so experiment runners can exercise context asymmetry under tight control. For service usage we additionally ship a single \texttt{debate(prompt, mode=...)} tool (see \texttt{src/ploidy/server.py}) that collapses the state machine into one call, and a companion \texttt{/ploidy} Claude Code slash command (\texttt{.claude/commands/ploidy.md}) that automates the deep vs fresh sub-agent orchestration. The legacy 11-tool surface remains canonical for the experiments reported here.
 
+\paragraph{Reproducibility.} The numbers reported in \S\ref{sec:experiments} were produced by \texttt{experiments/src/run\_experiment.py}, which uses the \texttt{claude --print} CLI and its own inline prompts; it does not depend on the MCP service code path. To reproduce exactly, check out the \texttt{v0.3.3-paper} git tag. Subsequent service-layer commits (v0.4+) introduced caching-oriented prompt rewrites in \texttt{src/ploidy/api\_client.py} that do not touch the experimental pipeline but would affect anyone comparing service-mode outputs to the paper's numbers.
+
 Full source: \url{https://github.com/heznpc/ploidy-research}
 
 % ============================================================

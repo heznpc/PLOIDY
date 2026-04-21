@@ -41,3 +41,25 @@ plus the `/ploidy` Claude Code slash command at
 [`docs/v0.4-migration.md`](../docs/v0.4-migration.md) for the full
 mapping and the deprecation policy. Research protocols stay on the
 legacy tools indefinitely.
+
+## Reproducing paper numbers
+
+To reproduce the COLM 2026 numbers exactly, check out the
+**`v0.3.3-paper`** git tag before running:
+
+```bash
+git checkout v0.3.3-paper
+python src/run_experiment.py ...
+```
+
+`run_experiment.py` uses its own inline prompts and the
+`claude --print` CLI — it does not import `src/ploidy/api_client.py`.
+That's deliberate: when we restructure service-side prompts for
+caching or UX (PR #16 did one such pass), the experimental pipeline
+stays verbatim. But `main` gradually drifts ahead of the tagged
+state, so comparing `main`-branch service output against the paper's
+numbers introduces a prompt-version confound.
+
+**Rule of thumb**: every time a paper snapshot is submitted, tag it
+as `vX.Y.Z-paper` and record what diverged after. Convention tracked
+in [`CONVENTIONS.md`](../CONVENTIONS.md).
