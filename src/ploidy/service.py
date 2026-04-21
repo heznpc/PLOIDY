@@ -33,6 +33,7 @@ from ploidy.lockprovider import AsyncLockProvider, LockProvider
 from ploidy.metrics import metrics, tenant_label
 from ploidy.protocol import DebateMessage, DebatePhase, DebateProtocol, SemanticAction
 from ploidy.ratelimit import RateLimitError, TokenBucketLimiter
+from ploidy.render import render_debate
 from ploidy.session import DeliveryMode, EffortLevel, SessionContext, SessionRole
 from ploidy.store import DebateStore
 
@@ -762,10 +763,43 @@ class DebateService:
             len(result.points),
         )
 
+        # Two-terminal flow — pull transcript off the protocol for the
+        # same render treatment every other mode gets.
+        deep_sids = [sid for sid in session_roles if session_roles[sid] == "Deep"]
+        fresh_sids = [sid for sid in session_roles if session_roles[sid] != "Deep"]
+        msgs_by_sp: dict[tuple[str, DebatePhase], str] = {}
+        for msg in protocol.messages:
+            msgs_by_sp[(msg.session_id, msg.phase)] = msg.content
+        deep_positions_text = [msgs_by_sp.get((sid, DebatePhase.POSITION), "") for sid in deep_sids]
+        fresh_positions_text = [
+            msgs_by_sp.get((sid, DebatePhase.POSITION), "") for sid in fresh_sids
+        ]
+        deep_challenge_text = next(
+            (msgs_by_sp.get((sid, DebatePhase.CHALLENGE)) for sid in deep_sids), None
+        )
+        fresh_challenge_text = next(
+            (msgs_by_sp.get((sid, DebatePhase.CHALLENGE)) for sid in fresh_sids), None
+        )
+        rendered_markdown = render_debate(
+            prompt=protocol.prompt,
+            deep_label="Deep",
+            fresh_label=(session_roles[fresh_sids[0]] if fresh_sids else "Fresh"),
+            deep_positions=deep_positions_text,
+            fresh_positions=fresh_positions_text,
+            deep_challenge=deep_challenge_text,
+            fresh_challenge=fresh_challenge_text,
+            points=result.points,
+            synthesis=result.synthesis,
+            confidence=result.confidence,
+            debate_id=debate_id,
+            mode="two_terminal",
+        )
+
         return {
             "debate_id": debate_id,
             "phase": "complete",
             "synthesis": result.synthesis,
+            "rendered_markdown": rendered_markdown,
             "confidence": result.confidence,
             "points": [
                 {
@@ -1007,12 +1041,29 @@ class DebateService:
             sum(1 for c in (deep_challenge, fresh_challenge) if c),
         )
 
+        rendered_markdown = render_debate(
+            prompt=prompt,
+            deep_label=deep_label,
+            fresh_label=fresh_label,
+            deep_positions=[deep_position],
+            fresh_positions=[fresh_position],
+            deep_challenge=deep_challenge,
+            fresh_challenge=fresh_challenge,
+            points=result.points,
+            synthesis=result.synthesis,
+            confidence=result.confidence,
+            meta_analysis=result.meta_analysis,
+            debate_id=debate_id,
+            mode="solo",
+        )
+
         return {
             "debate_id": debate_id,
             "phase": "complete",
             "mode": "solo",
             "config": config,
             "synthesis": result.synthesis,
+            "rendered_markdown": rendered_markdown,
             "confidence": result.confidence,
             "meta_analysis": result.meta_analysis,
             "points": [
@@ -1434,12 +1485,29 @@ class DebateService:
             deep_n,
         )
 
+        rendered_markdown = render_debate(
+            prompt=prompt,
+            deep_label="Deep",
+            fresh_label=fresh_role.replace("_", "-").title(),
+            deep_positions=list(deep_positions),
+            fresh_positions=list(fresh_positions),
+            deep_challenge=deep_challenge,
+            fresh_challenge=fresh_challenge,
+            points=result.points,
+            synthesis=result.synthesis,
+            confidence=result.confidence,
+            meta_analysis=result.meta_analysis,
+            debate_id=debate_id,
+            mode="auto",
+        )
+
         return {
             "debate_id": debate_id,
             "phase": "complete",
             "mode": "auto",
             "config": config,
             "synthesis": result.synthesis,
+            "rendered_markdown": rendered_markdown,
             "confidence": result.confidence,
             "meta_analysis": result.meta_analysis,
             "points": [
@@ -1630,6 +1698,40 @@ class DebateService:
             result.confidence,
         )
 
+        # Pull final positions/challenges off the protocol so the rendered
+        # markdown includes whichever branch (override, approve) ran above.
+        msg_by_session_phase: dict[tuple[str, DebatePhase], str] = {}
+        for msg in protocol.messages:
+            msg_by_session_phase[(msg.session_id, msg.phase)] = msg.content
+        deep_positions_text = [
+            msg_by_session_phase.get((sid, DebatePhase.POSITION), "") for sid in deep_ids
+        ]
+        fresh_positions_text = [
+            msg_by_session_phase.get((sid, DebatePhase.POSITION), "") for sid in fresh_ids
+        ]
+        deep_challenge_text = (
+            msg_by_session_phase.get((deep_id, DebatePhase.CHALLENGE)) if deep_id else None
+        )
+        fresh_challenge_text = (
+            msg_by_session_phase.get((auto_id, DebatePhase.CHALLENGE)) if auto_id else None
+        )
+
+        rendered_markdown = render_debate(
+            prompt=protocol.prompt,
+            deep_label="Deep",
+            fresh_label=fresh_role.replace("_", "-").title(),
+            deep_positions=deep_positions_text,
+            fresh_positions=fresh_positions_text,
+            deep_challenge=deep_challenge_text,
+            fresh_challenge=fresh_challenge_text,
+            points=result.points,
+            synthesis=result.synthesis,
+            confidence=result.confidence,
+            meta_analysis=result.meta_analysis,
+            debate_id=debate_id,
+            mode="auto_hitl",
+        )
+
         return {
             "debate_id": debate_id,
             "phase": "complete",
@@ -1637,6 +1739,7 @@ class DebateService:
             "reviewer_action": action,
             "fresh_role": fresh_role,
             "synthesis": result.synthesis,
+            "rendered_markdown": rendered_markdown,
             "confidence": result.confidence,
             "meta_analysis": result.meta_analysis,
             "points": [

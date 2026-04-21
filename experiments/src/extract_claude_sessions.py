@@ -23,12 +23,13 @@ Run from repo root:
 The goal is to make experiment activity recoverable even when the direct script
 output (experiments/results/<timestamp>/) is missing or incomplete.
 """
+
 from __future__ import annotations
 
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _CLAUDE_PROJECTS_ROOT = Path.home() / ".claude/projects"
@@ -182,8 +183,12 @@ def extract_from_jsonl(jsonl_path: Path) -> dict | None:
         return None
 
     tool_calls.sort(key=lambda r: r.get("ts") or "")
-    mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=timezone.utc)
-    rel_source = str(jsonl_path.relative_to(Path.home())) if jsonl_path.is_relative_to(Path.home()) else str(jsonl_path)
+    mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=UTC)
+    rel_source = (
+        str(jsonl_path.relative_to(Path.home()))
+        if jsonl_path.is_relative_to(Path.home())
+        else str(jsonl_path)
+    )
 
     return {
         "session_id": jsonl_path.stem,
@@ -236,7 +241,7 @@ def main() -> int:
         by_date.setdefault(e["mtime"][:10], []).append(e)
 
     index = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "source_dirs": [str(p) for p in PROJECT_DIRS if p.exists()],
         "totals": {
             "sessions_with_activity": len(all_entries),
@@ -256,7 +261,9 @@ def main() -> int:
                 "n_mcp_ploidy_calls": e["n_mcp_ploidy_calls"],
                 "n_errors": e["n_errors"],
                 "session_title": e["session_title"],
-                "first_user_message_preview": (e["first_user_message"] or "").replace("\n", " ")[:140],
+                "first_user_message_preview": (e["first_user_message"] or "").replace("\n", " ")[
+                    :140
+                ],
             }
             for e in all_entries
         ],
@@ -286,7 +293,9 @@ def main() -> int:
         md.append(f"### {date} — {len(sessions)} session(s), {runs} runs, {mcp} MCP calls")
         for s in sorted(sessions, key=lambda x: x["mtime"]):
             title = s["session_title"] or (s["first_user_message"] or "").replace("\n", " ")[:100]
-            md.append(f"- `{s['session_id'][:8]}` ({s['project_dir']}) — {s['n_experiment_runs']} runs, {s['n_mcp_ploidy_calls']} mcp, {s['n_errors']} err — {title[:120]}")
+            md.append(
+                f"- `{s['session_id'][:8]}` ({s['project_dir']}) — {s['n_experiment_runs']} runs, {s['n_mcp_ploidy_calls']} mcp, {s['n_errors']} err — {title[:120]}"
+            )
         md.append("")
 
     with (OUT_DIR / "INDEX.md").open("w", encoding="utf-8") as f:
