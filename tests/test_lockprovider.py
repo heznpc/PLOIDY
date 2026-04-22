@@ -99,6 +99,74 @@ async def test_redis_lock_provider_safe_against_foreign_release():
         await a.close()
 
 
+async def test_async_lock_provider_pop_removes_key():
+    provider = AsyncLockProvider()
+    try:
+        lock_a = provider.lock("k1")
+        provider.pop("k1")
+        # Re-locking the same key yields a fresh object once the old one is popped.
+        lock_b = provider.lock("k1")
+        assert lock_b is not lock_a
+        # Popping a key that does not exist is a silent no-op.
+        provider.pop("never-locked")
+    finally:
+        await provider.close()
+
+
+async def test_redis_release_skips_delete_when_token_no_longer_matches():
+    """If TTL expired and someone else re-acquired, release must not DEL their lock."""
+    import fakeredis.aioredis
+
+    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    provider = RedisLockProvider(client, ttl_ms=5_000, retry_delay=0.01)
+    try:
+        redis_key = "ploidy:lock:stolen"
+        # Acquire with our token, then simulate the TTL expiring and a
+        # foreign caller grabbing the key before we release.
+        async with provider.lock("stolen"):
+            await client.set(redis_key, "foreign-token", px=5_000)
+        # The foreign token must still be present — our release did not DEL it.
+        assert await client.get(redis_key) == "foreign-token"
+    finally:
+        await provider.close()
+
+
+async def test_redis_release_swallows_pipeline_errors():
+    """A broken pipeline mid-release must not propagate to the caller."""
+    import fakeredis.aioredis
+
+    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    provider = RedisLockProvider(client, ttl_ms=5_000, retry_delay=0.01)
+    try:
+        async with provider.lock("k"):
+            # Corrupt the client so the next pipeline call will blow up.
+            # The release path is invoked on __aexit__, and any exception
+            # inside it is swallowed so the caller's try/finally still runs.
+            client.pipeline = lambda *args, **kwargs: (_ for _ in ()).throw(
+                RuntimeError("connection lost")
+            )
+        # No exception escaped the context manager.
+    finally:
+        pass  # provider.close() may also hit the broken client; ignore.
+
+
+class _FakeRedisCloseOnly:
+    """Older redis-py exposed ``close()`` but not ``aclose()``."""
+
+    def __init__(self):
+        self.closed = False
+
+    async def close(self):
+        self.closed = True
+
+
+async def test_redis_close_falls_back_to_close_on_older_clients():
+    client = _FakeRedisCloseOnly()
+    provider = RedisLockProvider(client)
+    await provider.close()
+    assert client.closed is True
+
+
 async def test_service_uses_redis_lock_provider(tmp_path):
     """Smoke test: wire a Redis lock into a live service and drive a full flow."""
     import fakeredis.aioredis
