@@ -90,6 +90,91 @@ class TestShowCommand:
         assert "No convergence result yet" in out
 
 
+@pytest.fixture
+async def seeded_render_store(tmp_path, monkeypatch):
+    db = tmp_path / "render_hist.db"
+    monkeypatch.setenv("PLOIDY_DB_PATH", str(db))
+    store = DebateStore(db_path=db)
+    await store.initialize()
+    try:
+        await store.save_debate(
+            "render01",
+            "Rust or Go?",
+            config={
+                "mode": "solo",
+                "deep_label": "Project-context",
+                "fresh_label": "First-principles",
+            },
+        )
+        await store.save_session("render01-deep-001", "render01", "deep", "Rust or Go?")
+        await store.save_session("render01-fresh-001", "render01", "fresh", "Rust or Go?")
+        await store.save_message("render01", "render01-deep-001", "position", "Go scales better")
+        await store.save_message("render01", "render01-fresh-001", "position", "Rust gives safety")
+        await store.save_message(
+            "render01", "render01-deep-001", "challenge", "But Rust compile times"
+        )
+        await store.save_message(
+            "render01", "render01-fresh-001", "challenge", "Go GC hurts latency"
+        )
+        await store.save_convergence(
+            "render01",
+            synthesis="Depends on workload.",
+            confidence=0.55,
+            points_json='[{"category":"irreducible","summary":"Perf vs safety trade-off"}]',
+        )
+        await store.update_debate_status("render01", "complete")
+    finally:
+        await store.close()
+    yield db
+
+
+class TestRenderedOption:
+    async def test_rendered_flag_outputs_markdown(self, seeded_render_store, capsys):
+        rc = await history_cli.run(["show", "render01", "--rendered"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "## Ploidy debate result" in out
+        assert "Confidence: 55%" in out
+        # Labels from config_json reach render_debate.
+        assert "Project-context" in out
+        assert "First-principles" in out
+        # Positions and challenges are reconstructed from messages.
+        assert "Go scales better" in out
+        assert "Rust gives safety" in out
+        assert "But Rust compile times" in out
+        assert "Go GC hurts latency" in out
+        # Convergence point survives the round-trip.
+        assert "Perf vs safety trade-off" in out
+        # Collapsible sections are the whole point of rendered output.
+        assert "<details>" in out
+
+    async def test_rendered_flag_without_convergence(self, tmp_path, monkeypatch, capsys):
+        db = tmp_path / "pending_render.db"
+        monkeypatch.setenv("PLOIDY_DB_PATH", str(db))
+        store = DebateStore(db_path=db)
+        await store.initialize()
+        try:
+            await store.save_debate("pending02", "Not done")
+        finally:
+            await store.close()
+        rc = await history_cli.run(["show", "pending02", "--rendered"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "No convergence result yet" in out
+        # No markdown template artifacts when there is nothing to render.
+        assert "## Ploidy debate result" not in out
+
+    async def test_default_show_unchanged_without_flag(self, seeded_render_store, capsys):
+        rc = await history_cli.run(["show", "render01"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Default path stays the structured text form, not the render.
+        assert "## Ploidy debate result" not in out
+        assert "Debate render01" in out
+        assert "Confidence: 55%" in out
+        assert "Depends on workload" in out
+
+
 class TestTableFormatter:
     def test_columns_align(self):
         table = history_cli._format_table(

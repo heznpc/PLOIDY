@@ -6,11 +6,14 @@ the server does not need to be running. Two subcommands:
 - ``ploidy-history`` or ``ploidy-history list`` — most-recent-first
   table of debates (id / status / confidence / prompt preview).
 - ``ploidy-history show <debate-id-or-prefix>`` — synthesis, confidence,
-  and per-category convergence points for one debate.
+  and per-category convergence points for one debate. Pass
+  ``--rendered`` to re-render the answer-first markdown (the same output
+  a live debate streams) from the canonical DB rows at read time — no
+  markdown is persisted, so this view always reflects the current
+  render template.
 
-Intentionally zero-dependency: stdlib only. The goal is "quick check
-from zsh"; the full-interactivity UI is what ``ploidy-dashboard``
-covers on port 8766.
+Zero third-party dependency: only stdlib plus Ploidy's own
+``render``/``convergence`` modules (themselves stdlib-only).
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ import asyncio
 import json
 import sys
 
+from ploidy.convergence import ConvergencePoint
+from ploidy.render import render_debate
 from ploidy.store import DebateStore
 
 
@@ -100,42 +105,130 @@ async def _show_debate(args: argparse.Namespace) -> int:
             return 1
 
         conv = await store.get_convergence(debate["id"])
+
+        if getattr(args, "rendered", False):
+            return await _print_rendered(store, debate, conv)
+        return _print_structured(debate, conv)
+    finally:
+        await store.close()
+
+
+def _print_structured(debate: dict, conv: dict | None) -> int:
+    print(f"# Debate {debate['id']}")
+    print(f"Prompt: {debate['prompt']}")
+    print(f"Status: {debate['status']}")
+    print(f"Updated: {debate.get('updated_at', '?')}")
+    print()
+
+    if conv is None:
+        print("(No convergence result yet.)")
+        return 0
+
+    conf = int((conv.get("confidence") or 0) * 100)
+    print(f"Confidence: {conf}%")
+    print()
+    print("## Synthesis")
+    print(conv.get("synthesis", "(empty)"))
+    print()
+
+    points_json = conv.get("points_json") or "[]"
+    try:
+        points = json.loads(points_json)
+    except json.JSONDecodeError:
+        points = []
+
+    if points:
+        print("## Convergence points")
+        for p in points:
+            cat = p.get("category", "?")
+            summary = p.get("summary", "")
+            print(f"- [{cat}] {summary}")
+            if p.get("resolution"):
+                print(f"    resolution: {p['resolution']}")
+            if p.get("root_cause"):
+                print(f"    root cause: {p['root_cause']}")
+    return 0
+
+
+async def _print_rendered(store: DebateStore, debate: dict, conv: dict | None) -> int:
+    """Re-render the answer-first markdown from canonical DB rows.
+
+    Mirrors the reconstruction service.py performs at SSE-emit time so
+    the CLI output matches the live debate stream and the dashboard.
+    Nothing is cached: template changes propagate to past debates on
+    the next ``show --rendered`` call.
+    """
+    if conv is None:
         print(f"# Debate {debate['id']}")
         print(f"Prompt: {debate['prompt']}")
         print(f"Status: {debate['status']}")
-        print(f"Updated: {debate.get('updated_at', '?')}")
         print()
-
-        if conv is None:
-            print("(No convergence result yet.)")
-            return 0
-
-        conf = int((conv.get("confidence") or 0) * 100)
-        print(f"Confidence: {conf}%")
-        print()
-        print("## Synthesis")
-        print(conv.get("synthesis", "(empty)"))
-        print()
-
-        points_json = conv.get("points_json") or "[]"
-        try:
-            points = json.loads(points_json)
-        except json.JSONDecodeError:
-            points = []
-
-        if points:
-            print("## Convergence points")
-            for p in points:
-                cat = p.get("category", "?")
-                summary = p.get("summary", "")
-                print(f"- [{cat}] {summary}")
-                if p.get("resolution"):
-                    print(f"    resolution: {p['resolution']}")
-                if p.get("root_cause"):
-                    print(f"    root cause: {p['root_cause']}")
+        print("(No convergence result yet.)")
         return 0
-    finally:
-        await store.close()
+
+    sessions = await store.get_sessions(debate["id"])
+    messages = await store.get_messages(debate["id"])
+
+    deep_sids = [s["id"] for s in sessions if s["role"] == "deep"]
+    fresh_sids = [s["id"] for s in sessions if s["role"] != "deep"]
+
+    msgs_by_sp: dict[tuple[str, str], str] = {
+        (m["session_id"], m["phase"]): m["content"] for m in messages
+    }
+    deep_positions = [msgs_by_sp.get((sid, "position"), "") for sid in deep_sids]
+    fresh_positions = [msgs_by_sp.get((sid, "position"), "") for sid in fresh_sids]
+    deep_challenge = next(
+        (msgs_by_sp[sid, "challenge"] for sid in deep_sids if (sid, "challenge") in msgs_by_sp),
+        None,
+    )
+    fresh_challenge = next(
+        (msgs_by_sp[sid, "challenge"] for sid in fresh_sids if (sid, "challenge") in msgs_by_sp),
+        None,
+    )
+
+    try:
+        config = json.loads(debate.get("config_json") or "{}")
+    except json.JSONDecodeError:
+        config = {}
+    deep_label = config.get("deep_label", "Deep")
+    fresh_role = config.get("fresh_role")
+    fresh_label = config.get("fresh_label") or (
+        fresh_role.replace("_", "-").title() if fresh_role else "Fresh"
+    )
+
+    try:
+        raw_points = json.loads(conv.get("points_json") or "[]")
+    except json.JSONDecodeError:
+        raw_points = []
+    points = [
+        ConvergencePoint(
+            category=p.get("category", "irreducible"),
+            summary=p.get("summary", ""),
+            session_a_view=p.get("session_a_view", ""),
+            session_b_view=p.get("session_b_view", ""),
+            resolution=p.get("resolution"),
+            root_cause=p.get("root_cause"),
+        )
+        for p in raw_points
+    ]
+
+    markdown = render_debate(
+        prompt=debate["prompt"],
+        deep_label=deep_label,
+        fresh_label=fresh_label,
+        deep_positions=deep_positions,
+        fresh_positions=fresh_positions,
+        deep_challenge=deep_challenge,
+        fresh_challenge=fresh_challenge,
+        points=points,
+        synthesis=conv.get("synthesis", ""),
+        confidence=conv.get("confidence") or 0.0,
+        meta_analysis=conv.get("meta_analysis"),
+        debate_id=debate["id"],
+        mode=config.get("mode"),
+    )
+    print(markdown)
+    return 0
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -150,6 +243,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_show = sub.add_parser("show", help="Show synthesis + points for one debate.")
     p_show.add_argument("debate_id", help="Full debate id or a unique prefix.")
+    p_show.add_argument(
+        "--rendered",
+        action="store_true",
+        help="Output the answer-first rendered markdown (same format as the "
+        "live debate stream), re-rendered from stored rows at read time.",
+    )
     return parser
 
 

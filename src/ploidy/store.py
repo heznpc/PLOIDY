@@ -268,13 +268,13 @@ class DebateStore:
         db = _require_db(self._db)
         if owner_id is None:
             cursor = await db.execute(
-                "SELECT id, prompt, status, owner_id, created_at, updated_at "
+                "SELECT id, prompt, status, owner_id, config_json, created_at, updated_at "
                 "FROM debates WHERE id = ?",
                 (debate_id,),
             )
         else:
             cursor = await db.execute(
-                "SELECT id, prompt, status, owner_id, created_at, updated_at "
+                "SELECT id, prompt, status, owner_id, config_json, created_at, updated_at "
                 "FROM debates WHERE id = ? AND owner_id = ?",
                 (debate_id, owner_id),
             )
@@ -296,13 +296,13 @@ class DebateStore:
         db = _require_db(self._db)
         if owner_id is None:
             cursor = await db.execute(
-                "SELECT id, prompt, status, owner_id, created_at, updated_at "
+                "SELECT id, prompt, status, owner_id, config_json, created_at, updated_at "
                 "FROM debates ORDER BY created_at DESC LIMIT ?",
                 (min(limit, 200),),
             )
         else:
             cursor = await db.execute(
-                "SELECT id, prompt, status, owner_id, created_at, updated_at "
+                "SELECT id, prompt, status, owner_id, config_json, created_at, updated_at "
                 "FROM debates WHERE owner_id = ? "
                 "ORDER BY created_at DESC LIMIT ?",
                 (owner_id, min(limit, 200)),
@@ -318,7 +318,7 @@ class DebateStore:
         """
         db = _require_db(self._db)
         cursor = await db.execute(
-            "SELECT id, prompt, status, owner_id, created_at, updated_at "
+            "SELECT id, prompt, status, owner_id, config_json, created_at, updated_at "
             "FROM debates WHERE status = 'active' ORDER BY created_at",
         )
         rows = await cursor.fetchall()
@@ -584,7 +584,7 @@ class DebateStore:
         """
         db = _require_db(self._db)
         cursor = await db.execute(
-            "SELECT debate_id, synthesis, confidence, points_json, created_at "
+            "SELECT debate_id, synthesis, confidence, points_json, meta_analysis, created_at "
             "FROM convergence WHERE debate_id = ?",
             (debate_id,),
         )
