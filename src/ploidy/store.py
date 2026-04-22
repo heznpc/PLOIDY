@@ -204,7 +204,14 @@ class DebateStore:
 
         Enables WAL mode for concurrent read/write access and sets up
         the schema for debates, sessions, messages, and convergence results.
+
+        Idempotent: calling more than once returns immediately so callers
+        that share a store across lazy-init sites (e.g. the OAuth provider
+        alongside the debate service) can safely re-enter without leaking
+        connections.
         """
+        if self._db is not None:
+            return
         self.db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row

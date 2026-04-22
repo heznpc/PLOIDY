@@ -55,6 +55,22 @@ _AUTH_TOKEN = os.environ.get("PLOIDY_AUTH_TOKEN")
 # PLOIDY_AUTH_TOKEN. Each accepted token resolves to a distinct
 # AccessToken.client_id, which the service uses as owner_id.
 _TOKEN_MAP_RAW = os.environ.get("PLOIDY_TOKENS", "")
+# Auth mode selector. ``bearer`` (default, legacy) keeps today's
+# PLOIDY_TOKENS behaviour. ``oauth`` swaps in the full OAuth 2.0
+# Authorization Server (required for Claude.ai Connectors Directory).
+# ``both`` runs OAuth alongside legacy bearer for the transition window.
+_AUTH_MODE = os.environ.get("PLOIDY_AUTH_MODE", "bearer").lower()
+if _AUTH_MODE not in ("bearer", "oauth", "both"):
+    logger.warning(
+        "Unknown PLOIDY_AUTH_MODE=%r; falling back to 'bearer'. "
+        "Valid values: bearer / oauth / both.",
+        _AUTH_MODE,
+    )
+    _AUTH_MODE = "bearer"
+# Issuer URL advertised in the OAuth discovery document. Defaults to
+# ``http://localhost:$PLOIDY_PORT`` for local dev; production must set
+# this to the publicly reachable HTTPS base URL.
+_OAUTH_ISSUER = os.environ.get("PLOIDY_OAUTH_ISSUER", f"http://localhost:{_PORT}")
 
 
 def _load_token_map() -> dict[str, str]:
@@ -125,13 +141,47 @@ class _PloidyTokenVerifier:
         )
 
 
-_auth_kwargs: dict = {}
-if _TOKEN_MAP:
-    _auth_kwargs["token_verifier"] = _PloidyTokenVerifier()
-    logger.info(
-        "Bearer token auth enabled; %d tenant token(s) loaded",
-        len(_TOKEN_MAP),
-    )
+def _build_auth_kwargs() -> dict:
+    """Assemble the auth kwargs passed to FastMCP based on ``PLOIDY_AUTH_MODE``."""
+    kwargs: dict = {}
+    if _AUTH_MODE in ("bearer", "both") and _TOKEN_MAP:
+        kwargs["token_verifier"] = _PloidyTokenVerifier()
+        logger.info(
+            "Bearer token auth enabled; %d tenant token(s) loaded",
+            len(_TOKEN_MAP),
+        )
+    if _AUTH_MODE in ("oauth", "both"):
+        from mcp.server.auth.settings import (
+            AuthSettings,
+            ClientRegistrationOptions,
+            RevocationOptions,
+        )
+
+        from ploidy.oauth import PloidyOAuthProvider
+
+        # The provider lazy-inits its store on first method call, so we
+        # can construct it here before the event loop is running.
+        oauth_store = DebateStore()
+        kwargs["auth_server_provider"] = PloidyOAuthProvider(oauth_store)
+        kwargs["auth"] = AuthSettings(
+            issuer_url=_OAUTH_ISSUER,
+            # Ploidy is a self-contained AS — the MCP tool surface and
+            # the Authorization Server live at the same origin, so the
+            # resource server URL equals the issuer.
+            resource_server_url=_OAUTH_ISSUER,
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True,
+                valid_scopes=["debate"],
+                default_scopes=["debate"],
+            ),
+            revocation_options=RevocationOptions(enabled=True),
+            required_scopes=["debate"],
+        )
+        logger.info("OAuth 2.0 auth server enabled (issuer=%s)", _OAUTH_ISSUER)
+    return kwargs
+
+
+_auth_kwargs: dict = _build_auth_kwargs()
 
 
 def _current_owner() -> str | None:

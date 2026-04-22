@@ -74,11 +74,22 @@ class PloidyOAuthProvider(
     def __init__(self, store: DebateStore) -> None:
         self._store = store
 
+    async def _ensure_ready(self) -> None:
+        """Open the backing DB on first use.
+
+        The provider is typically constructed at module import time with
+        an unopened ``DebateStore`` — we cannot ``await`` at import, so
+        each method entry point calls this helper. ``DebateStore.initialize``
+        is idempotent so repeated calls are cheap.
+        """
+        await self._store.initialize()
+
     # ------------------------------------------------------------------
     # Client registration / lookup
     # ------------------------------------------------------------------
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        await self._ensure_ready()
         row = await self._store.get_oauth_client(client_id)
         if row is None:
             return None
@@ -99,6 +110,7 @@ class PloidyOAuthProvider(
         in when the raw request omits it). Redirect URIs must parse as
         strings; the pydantic model stores them as ``AnyUrl``.
         """
+        await self._ensure_ready()
         if not client_info.client_id:
             raise RegistrationError(
                 error="invalid_client_metadata",
@@ -133,6 +145,7 @@ class PloidyOAuthProvider(
         research tool. A real consent page lands in a later slice before
         directory submission.
         """
+        await self._ensure_ready()
         code = _new_token()
         scopes = list(params.scopes or ["debate"])
         await self._store.save_oauth_code(
@@ -159,6 +172,7 @@ class PloidyOAuthProvider(
         # ``exchange_authorization_code`` inside a transaction so the
         # full "verify PKCE + atomically consume" sequence is one unit.
         # This method only fetches for the MCP SDK's pre-exchange checks.
+        await self._ensure_ready()
         row = await self._store.get_oauth_code_for_load(authorization_code)
         if row is None:
             return None
@@ -179,6 +193,7 @@ class PloidyOAuthProvider(
         client: OAuthClientInformationFull,
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
+        await self._ensure_ready()
         # Atomic consume — second call with the same code returns None.
         consumed = await self._store.consume_oauth_code(authorization_code.code)
         if consumed is None:
@@ -232,6 +247,7 @@ class PloidyOAuthProvider(
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
+        await self._ensure_ready()
         row = await self._store.get_oauth_token(refresh_token)
         if row is None or row["kind"] != "refresh":
             return None
@@ -250,6 +266,7 @@ class PloidyOAuthProvider(
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
+        await self._ensure_ready()
         # Requested scopes must be a subset of the refresh token's scopes —
         # widening on refresh would let an attacker escalate.
         original = set(refresh_token.scopes)
@@ -293,6 +310,7 @@ class PloidyOAuthProvider(
     # ------------------------------------------------------------------
 
     async def load_access_token(self, token: str) -> AccessToken | None:
+        await self._ensure_ready()
         row = await self._store.get_oauth_token(token)
         if row is None or row["kind"] != "access":
             return None
@@ -312,4 +330,5 @@ class PloidyOAuthProvider(
         Idempotent — revoking an already-revoked or unknown token is
         silently a no-op so operators can retry safely.
         """
+        await self._ensure_ready()
         await self._store.revoke_oauth_token(token.token)

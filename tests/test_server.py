@@ -257,6 +257,75 @@ class TestWebappRoute:
         assert "<!DOCTYPE html>" in text or "<html" in text.lower()
 
 
+class TestBuildAuthKwargs:
+    """``_build_auth_kwargs`` decides which auth primitives FastMCP gets."""
+
+    def test_bearer_mode_with_tokens_sets_only_token_verifier(self, monkeypatch):
+        from ploidy import server as srv
+
+        monkeypatch.setattr(srv, "_AUTH_MODE", "bearer")
+        monkeypatch.setattr(srv, "_TOKEN_MAP", {"tok": "tenant"})
+        kwargs = srv._build_auth_kwargs()
+        assert "token_verifier" in kwargs
+        assert isinstance(kwargs["token_verifier"], srv._PloidyTokenVerifier)
+        assert "auth_server_provider" not in kwargs
+        assert "auth" not in kwargs
+
+    def test_bearer_mode_without_tokens_returns_empty(self, monkeypatch):
+        # PLOIDY_AUTH_MODE=bearer with no tokens is a valid
+        # "unauthenticated local dev" config.
+        from ploidy import server as srv
+
+        monkeypatch.setattr(srv, "_AUTH_MODE", "bearer")
+        monkeypatch.setattr(srv, "_TOKEN_MAP", {})
+        kwargs = srv._build_auth_kwargs()
+        assert kwargs == {}
+
+    def test_oauth_mode_sets_provider_and_auth_settings(self, monkeypatch):
+        from ploidy import server as srv
+        from ploidy.oauth import PloidyOAuthProvider
+
+        monkeypatch.setattr(srv, "_AUTH_MODE", "oauth")
+        monkeypatch.setattr(srv, "_TOKEN_MAP", {})
+        monkeypatch.setattr(srv, "_OAUTH_ISSUER", "https://example.com")
+        kwargs = srv._build_auth_kwargs()
+        assert isinstance(kwargs["auth_server_provider"], PloidyOAuthProvider)
+        assert kwargs["auth"] is not None
+        # Discovery must advertise the configured issuer.
+        assert str(kwargs["auth"].issuer_url).startswith("https://example.com")
+        # Registration enabled so Claude.ai's DCR flow succeeds.
+        assert kwargs["auth"].client_registration_options.enabled is True
+        # Revocation enabled so clients can log out properly.
+        assert kwargs["auth"].revocation_options.enabled is True
+        # Bearer path must NOT be active in pure OAuth mode even if a
+        # token map exists — that would create two concurrent auth
+        # surfaces, which is what ``both`` mode is for.
+        assert "token_verifier" not in kwargs
+
+    def test_both_mode_enables_bearer_and_oauth(self, monkeypatch):
+        from ploidy import server as srv
+        from ploidy.oauth import PloidyOAuthProvider
+
+        monkeypatch.setattr(srv, "_AUTH_MODE", "both")
+        monkeypatch.setattr(srv, "_TOKEN_MAP", {"tok": "tenant"})
+        kwargs = srv._build_auth_kwargs()
+        assert isinstance(kwargs["token_verifier"], srv._PloidyTokenVerifier)
+        assert isinstance(kwargs["auth_server_provider"], PloidyOAuthProvider)
+        assert kwargs["auth"] is not None
+
+    def test_oauth_mode_without_tokens_still_works(self, monkeypatch):
+        # OAuth does not rely on PLOIDY_TOKENS — a fresh deployment with
+        # mode=oauth and no bearer map is a supported configuration.
+        from ploidy import server as srv
+        from ploidy.oauth import PloidyOAuthProvider
+
+        monkeypatch.setattr(srv, "_AUTH_MODE", "oauth")
+        monkeypatch.setattr(srv, "_TOKEN_MAP", {})
+        kwargs = srv._build_auth_kwargs()
+        assert isinstance(kwargs["auth_server_provider"], PloidyOAuthProvider)
+        assert "token_verifier" not in kwargs
+
+
 class _FakeRequest:
     """Minimal async request stand-in for the SSE handler."""
 
