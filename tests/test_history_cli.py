@@ -109,9 +109,7 @@ async def seeded_render_store(tmp_path, monkeypatch):
         await store.save_session("render01-deep-001", "render01", "deep", "Rust or Go?")
         await store.save_session("render01-fresh-001", "render01", "fresh", "Rust or Go?")
         await store.save_message("render01", "render01-deep-001", "position", "Go scales better")
-        await store.save_message(
-            "render01", "render01-fresh-001", "position", "Rust gives safety"
-        )
+        await store.save_message("render01", "render01-fresh-001", "position", "Rust gives safety")
         await store.save_message(
             "render01", "render01-deep-001", "challenge", "But Rust compile times"
         )
