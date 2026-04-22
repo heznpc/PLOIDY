@@ -31,6 +31,7 @@ dependencies = [
 ploidy = "ploidy.server:main"
 ploidy-dashboard = "ploidy.dashboard:main"
 ploidy-retention = "ploidy.retention:main"
+ploidy-ask = "ploidy.cli:main"
 
 [project.optional-dependencies]
 api = [
@@ -49,6 +50,9 @@ metrics = [
 redis = [
     "redis>=5.0",
 ]
+cli = [
+    "httpx>=0.27",
+]
 dev = [
     "pytest",
     "pytest-asyncio",
@@ -63,7 +67,7 @@ docs = [
     "mkdocs-minify-plugin",
 ]
 all = [
-    "ploidy[api,dashboard,dev,docs,analysis,metrics,redis]",
+    "ploidy[api,dashboard,dev,docs,analysis,metrics,redis,cli]",
 ]
 
 [tool.ruff]
