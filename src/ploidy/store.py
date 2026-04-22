@@ -797,6 +797,35 @@ class DebateStore:
         )
         await self._commit()
 
+    async def get_oauth_code_for_load(self, code: str) -> dict | None:
+        """Read-only code lookup used by ``load_authorization_code``.
+
+        Unlike ``consume_oauth_code`` this does not flip ``used``; the
+        MCP SDK calls this method first to gather pre-exchange metadata
+        (PKCE challenge, redirect URI) before invoking the consuming
+        exchange call. A row is returned only when the code is known,
+        unused, and not yet expired.
+        """
+        db = _require_db(self._db)
+        cursor = await db.execute(
+            "SELECT code, client_id, redirect_uri, scopes, code_challenge, "
+            "code_challenge_method, expires_at, used, created_at "
+            "FROM oauth_codes WHERE code = ?",
+            (code,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        record = dict(row)
+        if record["used"]:
+            return None
+        now_cursor = await db.execute("SELECT datetime('now') AS now")
+        now_row = await now_cursor.fetchone()
+        if record["expires_at"] < now_row["now"]:
+            return None
+        record["scopes"] = json.loads(record["scopes"])
+        return record
+
     async def consume_oauth_code(self, code: str) -> dict | None:
         """Atomically look up and mark a code as used.
 
