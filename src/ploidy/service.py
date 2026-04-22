@@ -172,28 +172,43 @@ class DebateService:
         self._initialized = False
 
     async def run_retention_once(self) -> int:
-        """Purge completed/cancelled debates older than retention_days.
+        """Purge completed/cancelled debates older than retention_days
+        plus expired/consumed OAuth codes and expired/revoked tokens.
 
-        Returns the number of rows removed. Running with
-        ``retention_days <= 0`` is a no-op that returns 0, which keeps the
-        call site symmetric whether retention is configured or not.
+        Returns the number of rows removed (debates + OAuth rows). Running
+        with ``retention_days <= 0`` keeps debate purging off but still
+        sweeps OAuth state — expired codes and tokens have their own
+        short-lived expiries and must not pile up in the DB even when the
+        operator has not enabled debate retention.
         """
-        if self.retention_days <= 0:
-            return 0
         from datetime import timedelta
 
-        cutoff = datetime.now(UTC) - timedelta(days=self.retention_days)
-        # SQLite's datetime('now') column uses " " as separator — match it.
-        cutoff_iso = cutoff.strftime("%Y-%m-%d %H:%M:%S")
-        removed = await self.store.purge_terminal_before(cutoff_iso)
-        if removed > 0:
-            logger.info("Retention purged %d terminal debate(s) older than %s", removed, cutoff_iso)
-            if self.retention_vacuum:
-                try:
-                    await self.store.vacuum()
-                except Exception:
-                    logger.exception("VACUUM after retention purge failed")
-        return removed
+        debate_removed = 0
+        if self.retention_days > 0:
+            cutoff = datetime.now(UTC) - timedelta(days=self.retention_days)
+            # SQLite's datetime('now') column uses " " as separator — match it.
+            cutoff_iso = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+            debate_removed = await self.store.purge_terminal_before(cutoff_iso)
+            if debate_removed > 0:
+                logger.info(
+                    "Retention purged %d terminal debate(s) older than %s",
+                    debate_removed,
+                    cutoff_iso,
+                )
+
+        # OAuth hygiene always runs — short-lived codes (5 min) and
+        # expired access tokens (1 hour) need sweeping regardless of the
+        # debate retention setting.
+        oauth_removed = await self.store.purge_oauth_expired()
+        if oauth_removed > 0:
+            logger.info("Retention purged %d OAuth row(s)", oauth_removed)
+
+        if debate_removed > 0 and self.retention_vacuum:
+            try:
+                await self.store.vacuum()
+            except Exception:
+                logger.exception("VACUUM after retention purge failed")
+        return debate_removed + oauth_removed
 
     async def _retention_loop(self) -> None:
         """Periodic retention task. Sleeps between runs and swallows errors."""
