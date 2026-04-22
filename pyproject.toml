@@ -32,6 +32,7 @@ ploidy = "ploidy.server:main"
 ploidy-dashboard = "ploidy.dashboard:main"
 ploidy-retention = "ploidy.retention:main"
 ploidy-ask = "ploidy.cli:main"
+ploidy-history = "ploidy.history_cli:main"
 
 [project.optional-dependencies]
 api = [
