@@ -122,6 +122,74 @@ async def test_vacuum_runs_without_error(store):
 
 
 # ---------------------------------------------------------------------------
+# OAuth hygiene runs as part of ``run_retention_once`` so short-lived codes
+# and expired tokens never pile up (added in the OAuth integration series).
+# ---------------------------------------------------------------------------
+
+
+async def _seed_oauth_junk(s: DebateStore) -> None:
+    """Seed one expired code and one revoked token so the sweep has work."""
+    await s.save_oauth_client(
+        "test-client",
+        redirect_uris=["https://claude.ai/cb"],
+        grant_types=["authorization_code"],
+    )
+    await s.save_oauth_code(
+        "expired-code",
+        client_id="test-client",
+        redirect_uri="https://claude.ai/cb",
+        scopes=["debate"],
+        code_challenge="c",
+        code_challenge_method="S256",
+        expires_at="2020-01-01 00:00:00",
+    )
+    await s.save_oauth_token(
+        "revoked-token",
+        kind="access",
+        client_id="test-client",
+        scopes=["debate"],
+        expires_at="2099-01-01 00:00:00",
+    )
+    await s.revoke_oauth_token("revoked-token")
+
+
+async def test_run_retention_sweeps_oauth_state_even_when_debate_retention_disabled(tmp_path):
+    # retention_days=0 used to be a no-op. OAuth codes have a 5-minute
+    # TTL and tokens are typically 1 hour — those must still be swept
+    # regardless of the debate retention setting.
+    svc = DebateService(store=DebateStore(db_path=tmp_path / "oauth-ret.db"), retention_days=0)
+    await svc.initialize()
+    try:
+        await _seed_oauth_junk(svc.store)
+        removed = await svc.run_retention_once()
+        assert removed == 2  # one expired code + one revoked token
+    finally:
+        await svc.shutdown()
+
+
+async def test_run_retention_combines_debate_and_oauth_counts(tmp_path):
+    svc = DebateService(
+        store=DebateStore(db_path=tmp_path / "combined-ret.db"),
+        retention_days=30,
+        retention_vacuum=False,
+    )
+    await svc.initialize()
+    try:
+        # Expired debate.
+        start = await svc.start_debate("old", owner_id="t")
+        await svc.cancel(start["debate_id"], owner_id="t")
+        await _backdate(svc.store, start["debate_id"], "2020-01-01 00:00:00")
+        # Plus OAuth junk.
+        await _seed_oauth_junk(svc.store)
+
+        removed = await svc.run_retention_once()
+        # 1 debate + 1 expired code + 1 revoked token = 3.
+        assert removed == 3
+    finally:
+        await svc.shutdown()
+
+
+# ---------------------------------------------------------------------------
 # CLI module coverage: exercises ploidy.retention.main() directly rather
 # than re-testing DebateService (that surface is covered above).
 # ---------------------------------------------------------------------------
