@@ -151,6 +151,22 @@ mcp = FastMCP(
 )
 
 
+@mcp.custom_route("/", methods=["GET"])
+async def _webapp(_request):
+    """Single-page debate UI served from the root path.
+
+    Unauthenticated on purpose — the form itself collects a bearer
+    token when the server has ``PLOIDY_TOKENS`` configured. The page
+    is pure static HTML (no server state leaked) so public exposure
+    of the root path is safe.
+    """
+    from starlette.responses import HTMLResponse
+
+    from ploidy.webapp import index_html
+
+    return HTMLResponse(index_html())
+
+
 @mcp.custom_route("/healthz", methods=["GET"])
 async def _healthz(_request):
     """Liveness probe. Succeeds once the DB connection is initialised."""
