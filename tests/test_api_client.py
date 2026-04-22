@@ -180,5 +180,3 @@ class TestFreshPosition:
         if system_msgs:
             content = system_msgs[0].get("content", "").lower()
             assert "no background" in content or "no context" in content
-
-
