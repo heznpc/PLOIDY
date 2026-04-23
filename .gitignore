@@ -43,8 +43,13 @@ Thumbs.db
 # MkDocs build
 site/
 
-# Korean documentation (local only)
+# Korean documentation (local only) — internal planning / review docs
+# stay excluded. Public legal artefacts are explicitly re-included so
+# they ship alongside the English originals (PIPA requires Korean notices
+# for Korean users).
 docs/ko/
+!docs/ko/privacy-policy.md
+!docs/ko/terms-of-service.md
 
 # Claude Code / agent local config
 CLAUDE.md
