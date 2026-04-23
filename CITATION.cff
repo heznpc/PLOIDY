@@ -1,0 +1,43 @@
+cff-version: 1.2.0
+title: "Ploidy: Context-Asymmetric Structured Debate for LLM Decision Verification"
+message: "If you use this software in academic work, please cite the Zenodo record."
+type: software
+authors:
+  - family-names: Yoon
+    given-names: Jiyeon
+    alias: heznpc
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.XXXXXXX"
+    description: "Zenodo DOI for the tagged release"
+  - type: url
+    value: "https://github.com/heznpc/ploidy-research"
+    description: "Source repository"
+repository-code: "https://github.com/heznpc/ploidy-research"
+license: MIT
+keywords:
+  - multi-agent debate
+  - context asymmetry
+  - confirmation bias
+  - anchoring
+  - MCP
+  - structured debate
+  - LLM
+abstract: |
+  Ploidy is a structured-debate protocol between same-model LLM
+  sessions with intentionally asymmetric context depths. It
+  identifies two independent phenomena - context asymmetry
+  (Event A) and stochastic variance (Event B) - and uses
+  ploidy-level session scaling to distinguish them. The
+  repository ships an MCP server implementation, an experiment
+  runner supporting four model families, and a human-in-the-
+  loop review capability.
+preferred-citation:
+  type: software
+  authors:
+    - family-names: Yoon
+      given-names: Jiyeon
+      alias: heznpc
+  title: "Ploidy: Context-Asymmetric Structured Debate for LLM Decision Verification"
+  year: 2026
+  url: "https://github.com/heznpc/ploidy-research"

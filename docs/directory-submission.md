@@ -18,8 +18,11 @@ Source of truth for the submission process:
 | PKCE S256 | ✅ shipped | Advertised in discovery; enforced by the SDK + provider |
 | Dynamic Client Registration | ✅ shipped | `/register` route |
 | Redirect URI allowlist (claude.ai / claude.com) | ✅ shipped | Each registered client may list either origin; the SDK validates on `/authorize` |
-| Privacy policy | ✅ drafted | [`privacy-policy.md`](privacy-policy.md) — **review before publishing** |
-| Terms of service | ✅ drafted | [`terms-of-service.md`](terms-of-service.md) — **review before publishing** |
+| Privacy policy (global baseline) | ✅ drafted | [`privacy-policy.md`](privacy-policy.md) — GDPR / CCPA / PIPA / LGPD structure; **legal review required before publishing** |
+| Terms of service (global baseline) | ✅ drafted | [`terms-of-service.md`](terms-of-service.md) — governing law + consumer protections + indemnification; **legal review required before publishing** |
+| Security reporting channel | ✅ [`SECURITY.md`](../SECURITY.md) | GitHub Security Advisories + email fallback |
+| Citation metadata | ✅ [`CITATION.cff`](../CITATION.cff) + `.zenodo.json` | Zenodo DOI placeholder pending release |
+| Korean translation (PIPA) | ⏳ pending | Target: `docs/ko/privacy-policy.md` + `docs/ko/terms-of-service.md` before active Korean marketing |
 | Logo (SVG + PNG) | ⏳ pending | Place in `docs/assets/logo.{svg,png}` |
 | Favicon | ⏳ pending | `docs/assets/favicon.ico` |
 | Screenshots (3-5) | ⏳ pending | Debate flow / dashboard / history — `docs/assets/screenshots/` |
