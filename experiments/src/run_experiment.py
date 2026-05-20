@@ -274,15 +274,56 @@ BACKEND_DEFAULTS: dict[str, str] = {
 }
 
 
+# A scratch directory that has no associated `~/.claude/projects/<encoded-cwd>/memory/`
+# tree, used as the working directory for every experimental CLI call so the
+# model never auto-loads the ploidy project's memory entries. Resolved lazily.
+_NEUTRAL_CWD: str | None = None
+
+
+def _neutral_cwd() -> str:
+    """Return a stable cwd whose encoded-cwd memory dir is empty.
+
+    The Claude Code CLI auto-loads every ``*.md`` file under
+    ``~/.claude/projects/<encoded-cwd>/memory/`` into the model's context.
+    Running ``claude --print`` from the repo root therefore injects ~500
+    architecture-review / fabrication-casebook memory files into every
+    cell — which contaminated the first 4th-sweep attempt by causing the
+    model to pattern-match new (legitimate) gradient prompts as the next
+    recurrence of an earlier refusal case (``F1 = 0.000`` on ~43% of
+    cells regardless of method). Invoking from a scratch directory whose
+    encoded path has no associated memory tree neutralises the leak
+    without using ``--bare`` (which would also disable OAuth and break
+    the Max-subscription zero-cost flow).
+    """
+    global _NEUTRAL_CWD
+    if _NEUTRAL_CWD is None:
+        import tempfile
+
+        _NEUTRAL_CWD = tempfile.mkdtemp(prefix="ploidy-exp-cwd-")
+    return _NEUTRAL_CWD
+
+
 def _call_claude(prompt: str, model: str, effort: str, system_prompt: str = None) -> str:
-    """Call via claude CLI --print. Free with Max/Pro subscription."""
+    """Call via claude CLI --print. Free with Max/Pro subscription.
+
+    Runs from a memory-neutral cwd (see ``_neutral_cwd``) so the
+    invocation does not auto-load the ploidy project's
+    ``~/.claude/projects/<encoded-cwd>/memory/*.md`` files into the
+    model's context.
+    """
     cmd = ["claude", "--print", "--model", model]
     if system_prompt:
         cmd.extend(["--system-prompt", system_prompt])
     if effort and effort != "high":
         cmd.extend(["--effort", effort])
     cmd.append(prompt)
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        cwd=_neutral_cwd(),
+    )
     if result.returncode != 0:
         err_msg = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(f"claude CLI error: {err_msg}")
