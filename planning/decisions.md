@@ -88,3 +88,54 @@ cell. Locking the cutoffs and the external-source / secondary-judge gates
 *before* the run is what turns the 4th sweep into evidence rather than
 another underpowered observation.
 
+---
+
+## 2026-05-21 -- Pre-registration amendment (post-Major-review)
+
+**Context**: After the Critical fixes landed (PR #50), a same-session
+Major review surfaced four further gaps. The user selected `fix → 실험`
+on all four. This amendment is appended *before* the new sweep runs.
+
+**Decisions**:
+
+1. **External-source ratio raised to 3/10 (30 %)** — `tasks_external.py`
+   now ships 3 task variants (`ext_gitlab_2017_db_posture`,
+   `ext_github_2018_mysql_topology`, `ext_knight_2012_smars_deploy`),
+   each anchored to a public post-mortem or SEC filing. The original
+   pre-registration's "≥2 of 10" gate is upgraded to "≥3 of 10".
+
+2. **Context-length gradient added** — `experiments/src/tasks_gradient.py`
+   expands the 10 base tasks into 30 variants at three length tiers
+   (`short ≈ 500 tokens`, `medium ≈ 1000 tokens`, `long = full`). The
+   replication runs all 30 variants × n=5 × {Single, Ploidy, CCR} =
+   450 runs. The gradient is what lets H2's "entrenchment threshold"
+   move from a qualitative claim ("regime") to a numeric cutoff
+   (the smallest tier at which Δ̄F1 ≥ 0.030 reproduces).
+
+3. **Falsification gates reported per length tier** — the
+   `Δ̄F1 ≥ 0.030 / d ≥ 0.30 / p_corr < 0.05` triple is evaluated on
+   each tier independently. Reporting form: "H2 supported at
+   long tier / not supported at medium tier / not supported at short
+   tier" — the threshold *is* the result.
+
+4. **Paper body reflects the gates** — abstract, §1 Introduction
+   Contributions list, §sec:aggregate-stats honest-summary
+   paragraph, and §sec:threshold all carry the cutoff triple
+   verbatim so the paper cannot be revised post-hoc to a weaker
+   hypothesis (the cross-reference would be visible in the diff).
+
+5. **Raw artefact publication path** —
+   `experiments/data/processed/claude_sessions/INDEX.{json,md}` is
+   already tracked. The 4th-sweep `experiments/results/<timestamp>/`
+   tree is bundled into the Zenodo deposit alongside the
+   `v0.3.4-paper` git tag for reviewer end-to-end verification.
+
+**Why**: Critical fixes addressed measurement invalidity. These four
+Major decisions close the externally-visible drift between (a) what
+the paper claims about H2 and (b) what the data can actually support
+under family-corrected significance. Combined with the Critical
+secondary-judge κ gate, this means a reviewer reading the abstract,
+the contributions list, the aggregate-stats summary, and the
+threshold section will see the same falsifiable triple in every
+location.
+
