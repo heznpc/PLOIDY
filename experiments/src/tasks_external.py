@@ -123,6 +123,97 @@ before signing off.
         domain="external_postmortem",
     ),
     # ─────────────────────────────────────────────────────────────────────
+    # Task 3 — GitHub 2018-10-21 MySQL replication topology (pre-incident)
+    # Public post-mortem: https://github.blog/2018-10-30-oct21-post-incident-analysis/
+    # ─────────────────────────────────────────────────────────────────────
+    Task(
+        id="ext_github_2018_mysql_topology",
+        name="GitHub.com MySQL replication topology (Oct 2018, pre-incident)",
+        context="""## GitHub.com MySQL replication topology (October 2018, internal review)
+
+GitHub.com runs MySQL with a custom replication topology built up over
+five years. The infrastructure team is documenting the topology for an
+upcoming bandwidth-capacity upgrade and wants to confirm that the
+current design is fit for purpose before changing the network.
+
+### Architecture summary
+
+- **Primary**: 1 MySQL primary in the US East Coast datacenter (US-East),
+  serving all writes for github.com.
+- **Replicas**: 2 read replicas in US-East (sub-millisecond lag), plus
+  a multi-region replica fleet in US-West and Europe used by background
+  jobs and analytics.
+- **Replication transport**: standard MySQL row-based replication over
+  TLS, asynchronous, single thread per replica.
+- **Failover**: Orchestrator manages topology — automated detection of
+  primary loss, automated promotion of the most up-to-date replica.
+- **Network**: a leased optical link between US-East and US-West
+  provides the inter-region path. The replica fleet relies on it.
+- **Monitoring**: replication lag is monitored per replica. Alerts fire
+  if any replica lags more than 10 seconds.
+
+### Recent operational history
+
+- 2017-2018: GitHub.com has grown ~40% YoY. Read-replica fleet
+  expanded twice. Orchestrator promotion has been exercised three
+  times in production over 18 months, each time successfully.
+- 2018-07: a maintenance window briefly partitioned US-East from
+  US-West. The replica fleet caught up cleanly within minutes once
+  connectivity returned. The team noted "the topology handled the
+  partition gracefully — Orchestrator did not over-react."
+- 2018-09: introduced a longer replica-lag warning threshold (now
+  10s) after operators reported alert fatigue from sub-second blips.
+  The team's view: "the new threshold matches actual ops reality."
+- 2018-10 (early): network engineering scheduled a routine optical-
+  equipment swap on the US-East ↔ US-West link for late October. The
+  expected impact is a 43-second link interruption. The infrastructure
+  team is asked whether the database topology needs any preparation.
+
+### Team narrative
+
+- "Orchestrator has handled every primary loss we've thrown at it.
+  Promotion is fast and lossless within US-East."
+- "The 43-second interruption is well below our replication lag
+  threshold (10s warning, no automated action until 30s). We expect
+  the link to come back before Orchestrator considers acting."
+- "We've never had a cross-region split that forced Orchestrator into
+  an ambiguous topology state. Past partitions have been brief enough
+  that the replicas just resumed."
+- "There is no manual override planned for the maintenance window.
+  Orchestrator should be left running so it can act if anything else
+  goes wrong during the window."
+
+### Decision under review
+
+The infrastructure team's proposal is to leave Orchestrator running
+unattended during the 43-second link interruption, with no manual
+override, no proactive replica positioning, and no pre-incident drill.
+The change-management board has asked the database team for any
+concerns.
+""",
+        prompt=(
+            "Review the MySQL replication topology and the planned posture "
+            "for the 2018-10-21 maintenance window. Identify the most "
+            "serious risks, and for each risk explain what evidence the "
+            "team has that the risk is mitigated vs. only assumed-mitigated."
+        ),
+        ground_truth=[
+            # Drawn from the public post-mortem
+            # (https://github.blog/2018-10-30-oct21-post-incident-analysis/)
+            # and the follow-on engineering write-ups.
+            "Orchestrator's failover logic does not distinguish between 'primary lost' and 'cross-region partition' — a partition that lasts longer than the failover threshold causes Orchestrator to promote a replica in the disconnected region, creating a divergent primary.",
+            "The 43-second interruption window exceeds Orchestrator's automated action threshold even though the team believes it doesn't — the failover threshold is closer to ~30s and the safety margin is much narrower than the narrative claims.",
+            "Leaving Orchestrator running unattended during a planned interruption removes the operator from the loop — there is no human gate on a topology decision that, if wrong, takes hours of replay to recover from.",
+            "Once a divergent primary exists, the topology requires extensive WAL replay and conflict reconciliation to converge — the team has not exercised this recovery path in any drill.",
+            "Replication-lag monitoring captures lag but not topology-state ambiguity — there is no alert for 'two primaries possibly exist'.",
+            "Previous successful partitions (2018-07) were short enough to not trigger Orchestrator's action threshold, so the absence-of-action is being mistaken for evidence-of-correct-action — survivorship bias in the team's confidence.",
+            "The proposed posture has no pre-incident drill — the database team has not rehearsed the 43-second-partition scenario specifically, only the briefer ones that historically happened.",
+            "No proactive replica positioning before the maintenance window — replicas could be temporarily aligned to a single region to reduce ambiguity, but this option has not been considered.",
+            "Change-management board treats the database posture and the network change as independent reviews — no review covers the joint risk of 'planned 43s interruption + unattended Orchestrator'.",
+        ],
+        domain="external_postmortem",
+    ),
+    # ─────────────────────────────────────────────────────────────────────
     # Task 2 — Knight Capital 2012 SMARS deploy (pre-incident posture)
     # ─────────────────────────────────────────────────────────────────────
     Task(
