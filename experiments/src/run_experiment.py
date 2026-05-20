@@ -38,6 +38,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import time
 from dataclasses import asdict
@@ -378,12 +379,28 @@ def _call_openai_api(prompt: str, model: str, effort: str, system_prompt: str = 
 def _calc_wait_until_reset(err_msg: str) -> int:
     """Parse reset time from error message and return seconds to wait.
 
-    Error format: "You've hit your limit · resets 6am (Asia/Seoul)"
-    Falls back to 60s if parsing fails.
+    Two-tier strategy:
+
+    1. **Explicit parse** — if the error message contains the canonical
+       Claude CLI form ``"resets 6am (Asia/Seoul)"`` or similar, extract
+       the absolute hour and sleep until that hour:01 local time.
+
+    2. **5h-cycle fallback** — when the explicit parse fails (e.g. the
+       message uses a relative form like ``"resets in 4h 23m"``, or is
+       a generic 429), assume the Claude Code Max policy of a 5-hour
+       rolling window anchored at the user's known reset boundary
+       (default ``03:10`` local time). The fallback returns the
+       seconds until the *next* boundary, plus a 60-second safety
+       buffer to absorb server-clock skew.
+
+    The previous behaviour was a hard 60-second fallback which, given
+    ``max_retries=20`` upstream, only bought ~20 minutes of resilience
+    before the worker died — well under one reset window.
     """
     import re
     from datetime import datetime, timedelta
 
+    # Tier 1: explicit "resets Xam/pm" parse.
     match = re.search(r"resets\s+(\d{1,2})(am|pm)", err_msg.lower())
     if match:
         hour = int(match.group(1))
@@ -398,9 +415,24 @@ def _calc_wait_until_reset(err_msg: str) -> int:
         if target <= now:
             target += timedelta(days=1)
         wait = int((target - now).total_seconds())
-        return max(wait, 60)  # at least 60s
+        return max(wait, 60)
 
-    return 60  # fallback
+    # Tier 2: 5-hour rolling window fallback.
+    # Anchor is the user's known Claude Code Max reset boundary.
+    # Override via env var if the policy changes.
+    anchor_hour = int(os.environ.get("PLOIDY_RESET_ANCHOR_HOUR", "3"))
+    anchor_min = int(os.environ.get("PLOIDY_RESET_ANCHOR_MIN", "10"))
+    cycle_secs = int(os.environ.get("PLOIDY_RESET_CYCLE_SECS", str(5 * 3600)))
+
+    now = datetime.now()
+    anchor = now.replace(hour=anchor_hour, minute=anchor_min, second=0, microsecond=0)
+    if anchor > now:
+        anchor -= timedelta(days=1)
+    delta = (now - anchor).total_seconds()
+    cycles_passed = int(delta // cycle_secs)
+    next_reset = anchor + timedelta(seconds=(cycles_passed + 1) * cycle_secs)
+    wait = int((next_reset - now).total_seconds()) + 60  # safety buffer
+    return max(wait, 60)
 
 
 _BACKENDS = {

@@ -46,7 +46,7 @@ from tasks_longcontext import LONG_CONTEXT_TASKS
 
 SHORT_TARGET_CHARS = 2000  # ≈ 500 tokens at the chars-per-token ≈ 4 heuristic
 MEDIUM_TARGET_CHARS = 4000  # ≈ 1000 tokens
-TRUNCATION_MARKER = "\n\n[... context truncated for gradient experiment ...]\n"
+TRUNCATION_MARKER = "\n\n[...earlier sections of project history elided for brevity...]\n"
 
 BASE_TASK_IDS: tuple[str, ...] = (
     "ext_gitlab_2017_db_posture",
