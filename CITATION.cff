@@ -3,9 +3,7 @@ title: "Ploidy: Context-Asymmetric Structured Debate for LLM Decision Verificati
 message: "If you use this software in academic work, please cite the Zenodo record."
 type: software
 authors:
-  - family-names: Yoon
-    given-names: Jiyeon
-    alias: heznpc
+  - name: heznpc
 identifiers:
   - type: doi
     value: "10.5281/zenodo.XXXXXXX"
@@ -35,9 +33,7 @@ abstract: |
 preferred-citation:
   type: software
   authors:
-    - family-names: Yoon
-      given-names: Jiyeon
-      alias: heznpc
+    - name: heznpc
   title: "Ploidy: Context-Asymmetric Structured Debate for LLM Decision Verification"
   year: 2026
   url: "https://github.com/heznpc/ploidy-research"
