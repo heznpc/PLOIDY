@@ -2227,6 +2227,15 @@ if __name__ == "__main__":
         "--all-long", action="store_true", help="Use all long-context tasks (3 + 25 = 28 tasks)"
     )
     parser.add_argument(
+        "--gradient",
+        action="store_true",
+        help=(
+            "Use the 4th-sweep context-length gradient task set "
+            "(10 base tasks x 3 length tiers = 30 variants from tasks_gradient.py). "
+            "Pre-registered in planning/decisions.md (2026-05-21)."
+        ),
+    )
+    parser.add_argument(
         "--effort",
         type=str,
         default="high",
@@ -2383,6 +2392,12 @@ if __name__ == "__main__":
         TASKS.clear()
         TASKS.extend(LONG_CONTEXT_TASKS)
         TASKS.extend(EXTENDED_TASKS)
+
+    if hasattr(args, "gradient") and args.gradient:
+        from tasks_gradient import GRADIENT_TASKS
+
+        TASKS.clear()
+        TASKS.extend(GRADIENT_TASKS)
 
     task_ids = [int(x) for x in args.tasks.split(",")] if args.tasks else None
     method_ids = args.methods.split(",") if args.methods else None
