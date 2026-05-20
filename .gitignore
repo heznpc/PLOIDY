@@ -95,3 +95,23 @@ experiments/phase*.log
 # Preprint working copies (regenerated); submission snapshots in submissions/ stay tracked
 paper/main.pdf
 paper/main.bbl
+
+# Debate scratch / review artifacts (generated locally by ploidy debate runs;
+# contain synthetic scenarios that reference external personas — keep out of
+# the public repo per the portfolio PII rule).
+ARCHITECTURE_ANALYSIS_*.md
+ARCHITECTURE_REVIEW_*.md
+FIVE_REVIEWER_*.md
+FOUR_REVIEWER_*.md
+MIGRATION_RISK_*.md
+CONSOLIDATED_ISSUES_*.md
+.consolidated_review_*.md
+.neoql_risk_*.md
+.tmp_arch_*.md
+
+# Misplaced experiment results (canonical location is experiments/results/)
+experiments/src/results/
+
+# The `!.claude/` negation above re-includes the whole agent dir; re-exclude
+# the worktree subdirectory so transient agent worktrees stay local.
+.claude/worktrees/
