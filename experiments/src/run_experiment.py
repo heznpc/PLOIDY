@@ -1282,6 +1282,13 @@ def method_ploidy(task: Task) -> str:
 
 def judge_result(task: Task, method_name: str, output: str) -> dict:
     """Judge how many ground-truth issues were found."""
+    # TODO(review-2026-05-21): the prompt below scores against raw reviewer
+    # text. Per the 2026-05-21 review (paper §sec:limitations \"Presentation
+    # bias in judge evaluation\"), a follow-up should pre-extract a
+    # method-agnostic finding list before scoring so debate markers
+    # (\"Deep challenges Fresh,\" \"AGREE/SYNTHESIZE\") don't influence
+    # the verdict via output structure alone. Tracked alongside the
+    # κ secondary-judge gate.
     gt_list = "\n".join(f"  {i + 1}. {gt}" for i, gt in enumerate(task.ground_truth))
 
     judgment = call_llm(

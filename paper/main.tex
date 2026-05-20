@@ -439,6 +439,13 @@ We evaluate on 10 tasks across two context regimes:
 
 \paragraph{Judge.} Claude Opus 4.6 evaluates each method's output against ground truth. For each ground-truth issue: \textsc{found}~(1.0), \textsc{partial}~(0.5), or \textsc{missed}~(0.0). Additional valid findings not in ground truth are counted separately as bonus findings.
 
+% TODO(review-2026-05-21): the F1 formulation here penalises bonus findings
+% (valid issues not in ground truth) by counting them in the precision
+% denominator. The 4th-sweep replication report should additionally
+% present F1 with bonus findings *excluded* from precision, as a
+% companion metric — keeping the current formulation for backwards
+% comparability with the 1,660-entry aggregate while removing the
+% thoroughness penalty that §sec:why-no-help flags.
 \paragraph{Metrics.} Recall $= (\text{found} + 0.5 \times \text{partial}) / \text{total ground truth}$. Precision and F1 are reported but include bonus findings in the denominator, which penalizes methods that produce more valid-but-unlisted findings. We flag this as a metric design issue (\S\ref{sec:why-no-help}) and recommend interpreting recall as the primary indicator of ground-truth detection.
 
 \paragraph{Effort level.} Claude Code exposes an \textbf{effort} parameter (low, medium, high, max) that controls the model's reasoning depth per response. All experiments in this paper use the default \texttt{high} effort unless otherwise noted. We identify effort level as a potentially confounding variable: lower effort may reduce a session's ability to detect subtle issues, while higher effort may increase the quality of challenges. In \S\ref{sec:effort}, we describe a factorial experiment design crossing effort levels with methods to measure this interaction.
@@ -1072,11 +1079,27 @@ This pilot study has significant limitations that bound the strength of all clai
   \item \textbf{Author-defined ground truth}: All ground-truth issues were defined by the authors without independent expert validation. However, we note that cross-model experiments provide partial external validation: on concrete tasks (auth overhaul), all four model families independently identified the same ground-truth issues (5/5) regardless of method, suggesting these issues are objectively present rather than artifacts of author expectation. Bonus findings identified by the judge further suggest the ground truth is incomplete rather than fabricated. Nonetheless, future work should use independently validated benchmarks or multiple expert annotators with inter-rater agreement metrics.
   \item \textbf{Limited runs per model family}: Cross-family validation now covers 4 families (Claude Opus/Sonnet, Gemini~3.1~Pro, GPT-5.4), but each family has only 3 tasks per ploidy level. The capability threshold is observed across families but its exact boundary and task-type dependence require larger-scale validation.
   \item \textbf{Same-model judge}: Claude Opus 4.6 generates outputs and evaluates them. Systematic bias is possible (e.g., preference for structured multi-phase outputs, or conversely, penalizing verbose responses). Cross-model judges (GPT-4, Gemini) and a human evaluation subset with Cohen's kappa are needed.
+  % TODO(review-2026-05-21): the secondary-judge gate in §sec:threshold
+  % gives us a κ measurement against a non-Claude judge but does not
+  % normalise the *output format* across methods. A follow-up
+  % experiment should pass each method's output through an extractor
+  % that strips debate markers before scoring, isolating structure
+  % bias from content bias.
   \item \textbf{Presentation bias in judge evaluation}: Different methods produce structurally different outputs---Single Session yields plain analysis, while Ploidy outputs contain debate markers (``Deep challenges Fresh,'' ``AGREE/SYNTHESIZE''). The judge may conflate output structure with content quality, scoring well-organized debate transcripts higher regardless of substance. Additionally, LLMs exhibit speech mirroring (style adaptation to input patterns), which may cause the judge to respond differently to debate-structured vs.\ plain-text outputs. Rigorous control would require normalizing all method outputs to a uniform format before evaluation, or separating issue extraction from scoring. Proper experimental design for this confound warrants consultation with linguists and LLM evaluation specialists.
   \item \textbf{Circular task design risk}: Long-context tasks were designed with anchoring biases whose detection is facilitated by context absence. A session without context is expected to be less biased by definition. Stronger validation requires externally-sourced tasks (e.g., real-world architecture decisions from open-source projects) where the relationship between context and bias is not author-designed. M3MAD-Bench~\citep{li2026m3madbench} provides a unified cross-domain, cross-modality MAD evaluation suite addressing exactly the inconsistent-evaluation problem the authors observe across the MAD literature; porting Ploidy onto a subset of its tasks is a concrete next step for replacing custom-benchmark-only evidence with externally-sourced tasks.
   \item \textbf{Token cost}: Ploidy uses approximately 5$\times$ the tokens of Single Session. Self-Consistency (5-vote) was included as a budget-equivalent baseline and achieves the same 100\% recall as SF-Active on long-context tasks. The practical advantage of structured debate over Self-Consistency is the typed audit trail and convergence analysis, not recall improvement---a distinction that may or may not justify the added protocol complexity.
+  % TODO(review-2026-05-21): an MCP-server-mode replication of the
+  % 10-task long-context cell would exercise the convergence engine's
+  % rule-based classification (src/ploidy/convergence.py) end-to-end
+  % and provide a sanity check that CLI-mode results transfer to the
+  % service surface. Not blocking H2 — the CLI is the cleaner isolation
+  % substrate.
   \item \textbf{CLI simulation vs.\ MCP server}: Experiments use \texttt{claude --print} CLI rather than the Ploidy MCP server. While this provides cleaner session isolation, the convergence engine's rule-based classification (in the server) is not exercised in the experiments.
   \item \textbf{Metric design}: The current F1 formulation penalizes valid bonus findings as false positives. This systematically disadvantages more thorough methods and should be revised in future work.
+  % TODO(review-2026-05-21): the 4th-sweep replication fixes effort=high
+  % to keep the H2 cell paired with the original 1,660-entry data.
+  % The three-way effort × ploidy × injection interaction is left for
+  % a separate follow-up sweep — out of scope for the H2 falsification.
   \item \textbf{Effort sweep limited}: Effort sweep (\S\ref{sec:effort-sweep}) used 1n ploidy only. The effort~$\times$~ploidy~$\times$~injection three-way interaction is unmeasured.
   \item \textbf{English-only evaluation}: All experiments and ground truth are in English. Localized responses in other languages may exhibit different anchoring dynamics and information loss patterns (\S\ref{sec:language}).
 \end{itemize}
