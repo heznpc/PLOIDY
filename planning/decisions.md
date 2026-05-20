@@ -54,7 +54,7 @@ only if all three are met.
 
 1. **Effect-size gate (H2 — Context Asymmetry Threshold)**:
    `Ploidy mean F1 − Single mean F1 ≥ 0.030` on the new 10 long-context tasks,
-   measured at `effort=high`, `injection=raw`, `lang=en`, `claude-opus-4-6`.
+   measured at `effort=high`, `injection=raw`, `lang=en`, `claude-opus-4-7`.
 2. **Standardized-effect gate**: Cohen's d (paired) ≥ 0.30 over the same cell.
 3. **Significance gate**: Holm–Bonferroni family-corrected `p_corr < 0.05` on the
    paired Wilcoxon signed-rank test (`scripts: experiments/src/analyze_stats.py`).
@@ -138,4 +138,50 @@ secondary-judge κ gate, this means a reviewer reading the abstract,
 the contributions list, the aggregate-stats summary, and the
 threshold section will see the same falsifiable triple in every
 location.
+
+---
+
+## 2026-05-21 -- Model-version drift discovered (and fixed)
+
+**Context**: Mid-amendment, the user pointed out that the 4th-sweep
+target model should be Claude Opus 4.7, not 4.6 as the pre-registration
+had been written. Cross-checking the per-cell result JSONs revealed
+the actual experimental subject already transitioned on **2026-04-23**:
+~420 entries from 2026-03-18 through 2026-04-17 are on `claude-opus-4-6`,
+and 59 entries from 2026-04-23 onward are on `claude-opus-4-7`. The
+runner default (`MODEL = "claude-opus-4-6"` in `run_experiment.py:49`)
+plus paper §sec:experiments text were therefore lagging the actual
+experimental state by ~28 days. The smoke run kicked off earlier today
+inherited the stale default and produced 4.6 results, polluting the
+nominally-4.7 4th-sweep tree.
+
+**Decision**:
+
+1. **Runner default** flipped to `claude-opus-4-7` at three sites in
+   `experiments/src/run_experiment.py` (line 49 `MODEL`, line 50
+   `JUDGE_MODEL`, line 269 `BACKEND_DEFAULTS["claude"]`) plus the
+   negation comparison at line 2362.
+2. **Pre-registration falsification triple** (above amendment, gate~1)
+   updated `claude-opus-4-6` → `claude-opus-4-7`.
+3. **Paper** picks up a new "Model transition mid-program" paragraph
+   in §sec:experiments that explicitly attributes 1,601 of the 1,660
+   aggregate entries to 4.6 and 59 to 4.7, removes the abstract claim
+   that the 4th-sweep runs on 4.6, and adds the 2026-04-23 transition
+   date to the acknowledgement section.
+4. **Partial smoke results** from the killed run (a single dir under
+   `experiments/src/results/20260521_030404_*` containing two 4.6
+   cells) were removed before they could pollute any future analysis.
+5. **Per-experiment cells** in the existing paper (§sec:exp1, §sec:exp2,
+   §sec:cross-model, §sec:effort-sweep) retain their factually-correct
+   4.6 model attribution — those sweeps really did run on 4.6 and the
+   per-table model label is the truthful record.
+
+**Why**: This is a *self-evidencing* mistake — the pre-experiment
+review missed a paper↔runner↔result drift that the actual data file
+metadata had been broadcasting for four weeks. The new pre-reg locks
+4.7 and the paper now records the transition openly so the same
+mistake cannot survive another review pass. This particular drift
+(model version inferred from default constants rather than read from
+result files) is added to §sec:implications as a sixth intra-session
+anchoring case in a follow-up paper edit (not in this commit).
 

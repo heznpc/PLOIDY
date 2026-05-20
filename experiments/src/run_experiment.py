@@ -46,8 +46,8 @@ from pathlib import Path
 
 from task_model import Task
 
-MODEL = "claude-opus-4-6"
-JUDGE_MODEL = "claude-opus-4-6"
+MODEL = "claude-opus-4-7"
+JUDGE_MODEL = "claude-opus-4-7"
 EFFORT = "high"  # default effort level
 LANGUAGE = "en"  # default output language
 INJECTION_MODE = "raw"  # default context injection mode
@@ -265,8 +265,8 @@ def get_token_usage() -> dict:
 
 
 # Backend-specific model defaults
-BACKEND_DEFAULTS = {
-    "claude": "claude-opus-4-6",
+BACKEND_DEFAULTS: dict[str, str] = {
+    "claude": "claude-opus-4-7",
     "gemini": "gemini-3.1-pro",
     "codex": "codex-default",
     "openai": "gpt-4.1",
@@ -2359,7 +2359,7 @@ if __name__ == "__main__":
     TEMPERATURE = args.temperature
     MAX_TOKENS = args.max_tokens
     MODEL = (
-        args.model if args.model != "claude-opus-4-6" else BACKEND_DEFAULTS.get(BACKEND, args.model)
+        args.model if args.model != "claude-opus-4-7" else BACKEND_DEFAULTS.get(BACKEND, args.model)
     )
     JUDGE_MODEL = MODEL  # Use same model for judging by default
     EFFORT = args.effort
