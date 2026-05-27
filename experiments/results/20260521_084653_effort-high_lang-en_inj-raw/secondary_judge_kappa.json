@@ -1,0 +1,163 @@
+{
+  "results_dir": "experiments/results/20260521_084653_effort-high_lang-en_inj-raw",
+  "n_files_attempted": 5,
+  "n_files_used": 5,
+  "n_paired_verdicts": 45,
+  "secondary_judge": "gemini-2.5-pro",
+  "secondary_backend": "gemini",
+  "kappa": 0.7677419354838709,
+  "kappa_threshold": 0.4,
+  "h2_judge_gate": "VALID",
+  "per_file": [
+    {
+      "file": "ext_github_2018_mysql_topology__long_ccr.json",
+      "task_id": "ext_github_2018_mysql_topology__long",
+      "method": "ccr",
+      "primary_judge_model": "claude-opus-4-7",
+      "secondary_judge_model": "gemini-2.5-pro",
+      "primary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "PARTIAL",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "PARTIAL",
+        "9": "MISSED"
+      },
+      "secondary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "PARTIAL",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "FOUND",
+        "9": "MISSED"
+      },
+      "n_paired": 9
+    },
+    {
+      "file": "ext_github_2018_mysql_topology__long_ploidy.json",
+      "task_id": "ext_github_2018_mysql_topology__long",
+      "method": "ploidy",
+      "primary_judge_model": "claude-opus-4-7",
+      "secondary_judge_model": "gemini-2.5-pro",
+      "primary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "PARTIAL",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "FOUND",
+        "9": "FOUND"
+      },
+      "secondary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "PARTIAL",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "FOUND",
+        "9": "FOUND"
+      },
+      "n_paired": 9
+    },
+    {
+      "file": "ext_github_2018_mysql_topology__long_single.json",
+      "task_id": "ext_github_2018_mysql_topology__long",
+      "method": "single",
+      "primary_judge_model": "claude-opus-4-7",
+      "secondary_judge_model": "gemini-2.5-pro",
+      "primary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "FOUND",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "PARTIAL",
+        "9": "MISSED"
+      },
+      "secondary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "FOUND",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "PARTIAL",
+        "9": "PARTIAL"
+      },
+      "n_paired": 9
+    },
+    {
+      "file": "ext_github_2018_mysql_topology__medium_ccr.json",
+      "task_id": "ext_github_2018_mysql_topology__medium",
+      "method": "ccr",
+      "primary_judge_model": "claude-opus-4-7",
+      "secondary_judge_model": "gemini-2.5-pro",
+      "primary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "PARTIAL",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "FOUND",
+        "9": "PARTIAL"
+      },
+      "secondary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "PARTIAL",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "FOUND",
+        "9": "PARTIAL"
+      },
+      "n_paired": 9
+    },
+    {
+      "file": "ext_github_2018_mysql_topology__medium_ploidy.json",
+      "task_id": "ext_github_2018_mysql_topology__medium",
+      "method": "ploidy",
+      "primary_judge_model": "claude-opus-4-7",
+      "secondary_judge_model": "gemini-2.5-pro",
+      "primary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "PARTIAL",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "PARTIAL",
+        "9": "MISSED"
+      },
+      "secondary": {
+        "1": "FOUND",
+        "2": "FOUND",
+        "3": "FOUND",
+        "4": "FOUND",
+        "5": "MISSED",
+        "6": "FOUND",
+        "7": "FOUND",
+        "8": "MISSED",
+        "9": "MISSED"
+      },
+      "n_paired": 9
+    }
+  ]
+}

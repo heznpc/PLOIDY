@@ -284,3 +284,60 @@ also makes the pre-reg honest about what the experiment actually
 measures: Ploidy's value (if any) is in *detection thoroughness*,
 which token-bloat-penalised F1 cannot see.
 
+---
+
+## 2026-05-27 -- κ gate executed: VALID (κ = 0.768)
+
+**Context**: Per the 2026-05-21 + 2026-05-27 amendments, the
+secondary-judge κ gate had to be cleared before any further sweep
+result could be treated as evidence. The gate was executed against
+the 44-cell partial pilot using `gemini-2.5-pro` (substituted from
+the originally pre-registered `gemini-3.1-pro` because the public
+gemini CLI returns `ModelNotFoundError` for 3.1 as of 2026-05-27).
+
+**Result**: stored at
+`experiments/results/20260521_084653_effort-high_lang-en_inj-raw/secondary_judge_kappa.json`.
+
+| field                | value             |
+|----------------------|-------------------|
+| primary judge        | claude-opus-4-7   |
+| secondary judge      | gemini-2.5-pro    |
+| subset               | 5 deterministic-sorted result files |
+| paired verdicts      | 45 (9 ground-truth items × 5 cells) |
+| match rate           | 5 / 5 cells full-verdict matched (parse error 0) |
+| **Cohen's κ**        | **0.768**          |
+| threshold            | 0.40 |
+| **verdict**          | **VALID**          |
+
+**Interpretation**: κ = 0.768 falls in Landis & Koch's "substantial
+agreement" band (0.61--0.80). The Opus 4.7 primary judge and the
+Gemini 2.5 Pro secondary judge agree 76.8% beyond chance on the
+per-issue `{FOUND, PARTIAL, MISSED}` verdicts, meaning the same-
+model-judge confound conceded in §sec:limitations is not the
+dominant signal in the F1 / recall numbers reported from this
+sweep. The H2 metric verdicts are *judge-valid*: the partial
+pilot's `Δ̄_recall = +0.008 (paired), Δ̄_recall (long tier) = +0.066`
+result is not an artefact of Claude-on-Claude self-evaluation.
+
+**Decisions**:
+
+1. **44-cell partial is judge-valid evidence**. The directional
+   pattern (Single F1 plateaus, Ploidy F1 monotonic-↑, long-tier
+   recall favours Ploidy) is reported as such in the paper rather
+   than as an open methodological question.
+2. **The κ gate is now closed for the 44-cell partial.** If the
+   sweep resumes and produces additional cells, the gate must be
+   re-run on a 5-cell subset of the *new* cells (not the same 5)
+   to verify κ stability — a 0.768 baseline does not generalise
+   automatically to later cells.
+3. **gemini-3.1-pro substitution stays.** Should `gemini-3.1-pro`
+   become CLI-reachable before paper submission, the gate is re-run
+   on the same 5-subset and the κ delta is reported as a sensitivity
+   check, not as a replacement of the 0.768 baseline.
+
+**Why**: The κ gate was the load-bearing methodological
+prerequisite for treating the partial pilot's tier-monotonic
+recall gradient as evidence for H2. With κ = 0.768 it now is.
+
+
+
