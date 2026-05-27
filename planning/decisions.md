@@ -185,3 +185,102 @@ mistake cannot survive another review pass. This particular drift
 result files) is added to §sec:implications as a sixth intra-session
 anchoring case in a follow-up paper edit (not in this commit).
 
+---
+
+## 2026-05-27 -- Pre-registration amendment after 44-cell n=1 partial pilot
+
+**Context**: The 4th-sweep replication was stopped at user request after
+44 of 450 cells (~9.8%) completed. The partial pilot reveals a structural
+issue: the pre-registered F1 cutoff (Δ̄F1 ≥ 0.030) is *not* the metric
+the H2 hypothesis actually predicts. The 44-cell paired analysis
+(n=14 matched single↔ploidy pairs) shows:
+
+| metric            | Δ̄ Ploidy − Single | positives |
+|-------------------|-------------------|-----------|
+| F1                | **−0.096**         | 2 / 14     |
+| Recall            | **+0.008**         | 6 / 14     |
+| Recall (long tier only) | **+0.066**     | 4 / 5      |
+
+The F1 metric in `experiments/src/run_experiment.py` includes
+*bonus_findings* (valid issues not in the author-defined ground truth)
+in the precision denominator. Ploidy uses **4.64×** the tokens of
+Single (median 4.48×) and produces an average of 12.5 bonus_findings
+per cell vs Single's 7.5. The token bloat penalises Ploidy's F1
+*independently of detection capability* — exactly the metric design
+issue paper §sec:why-no-help self-flagged in the original 1,660-entry
+study but did not operationalise. The pilot data confirms the flag
+is now load-bearing: under F1, H2 is rejected; under recall, H2 is
+directionally supported at the long tier.
+
+A second issue surfaced during the pilot run: the same-model judge
+gate (Cohen's κ from a non-Claude judge on a 5-task subset, declared
+in the original 2026-05-21 amendment) was never executed. Without
+that κ, every reported F1 / recall number is a same-model judge
+self-evaluation — exactly the threat-to-validity the gate was meant
+to address.
+
+**Decisions**:
+
+1. **Recall promoted to co-primary metric.** The H2 falsification
+   triple now applies to *both* F1 and recall independently. H2 is
+   supported only if at least one of the two metrics passes all three
+   sub-gates (effect-size / standardised effect / Holm-Bonferroni
+   significance) at the corrected family-wise level. This makes the
+   token-bloat-driven F1 penalty no longer a structural veto.
+
+2. **Bonus-excluded F1 (F1*) as supplementary metric.** Define
+   F1* = harmonic mean of recall and (found+0.5*partial)/(found+partial),
+   i.e. precision computed *without* bonus_findings in the denominator.
+   F1* is reported alongside F1 in every table in §sec:experiments.
+   The pre-registered cutoffs apply to F1 (load-bearing for the
+   metric design issue), recall (clean detection), and F1*
+   (thoroughness-corrected) jointly.
+
+3. **κ gate executed against the 44-cell partial.** Before the sweep
+   resumes, `experiments/src/run_secondary_judge.py` is run with
+   `--secondary-judge gemini-2.5-pro --backend gemini --n-subset 5`
+   on the existing run directory. (Substitution note: the original
+   2026-05-21 pre-registration named `gemini-3.1-pro` as the secondary
+   judge candidate. As of 2026-05-27 the public `gemini` CLI returns
+   `ModelNotFoundError` for that identifier — only the `gemini-2.5`
+   family is reachable through the free CLI path. `gemini-2.5-pro`
+   is the closest available cross-family judge; the substitution
+   is logged here so the deviation from the pre-reg model name is
+   visible. If `gemini-3.1-pro` becomes CLI-reachable before paper
+   submission, the κ gate is re-run on the same 5-subset for
+   comparison.) The κ value is appended to `planning/decisions.md`
+   in a follow-up entry. If κ < 0.40, the 44 cells are reported
+   as *judge-invalid* and the sweep is reframed before continuation.
+
+4. **Tier-monotonic gradient observed in the partial pilot is
+   noted but not pre-registered as new evidence**. The
+   Single ≈ plateau / Ploidy monotonic-↑ pattern across short →
+   medium → long (Δ̄F1 closing from −0.114 → −0.018) is a *pre-existing
+   prediction* from §sec:threshold, not a post-hoc finding from the
+   pilot. It is reported as confirmation of direction, not as a new
+   discovery.
+
+5. **Prior-art reciprocal citation gate**. Three papers from the
+   2026-02-26 to 2026-05-27 window must be cited in §sec:related
+   before any further sweep result is published:
+
+   - "Courtroom-Style Multi-Agent Debate with Progressive RAG and
+     Role-Switching" (arxiv 2603.28488, 2026-03-30) — retrieval-side
+     asymmetry as analogue; explicit differentiation required.
+   - "Multi-Agent Debate with Memory Masking" (arxiv 2603.20215,
+     2026-03) — memory-contamination problem space overlaps with the
+     cwd-neutral fix logged on 2026-05-21.
+   - "Understanding the Anchoring Effect of LLM" (arxiv 2505.15392,
+     2026-03 update) — confirms CoT/Reflection/Ignore-Anchor are
+     ineffective, recommends "diluting via balanced contextual
+     signals" which Ploidy operationalises.
+
+**Why**: The 44-cell pilot exposed two issues that were already
+self-flagged in the paper but never bound to the pre-reg gates: the
+F1 metric design and the unexecuted secondary-judge κ. Both have to
+be closed before any further sweep result is treated as evidence
+for or against H2. Promoting recall and F1* to co-primary metrics
+also makes the pre-reg honest about what the experiment actually
+measures: Ploidy's value (if any) is in *detection thoroughness*,
+which token-bloat-penalised F1 cannot see.
+
