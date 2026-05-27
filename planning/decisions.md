@@ -339,5 +339,121 @@ result is not an artefact of Claude-on-Claude self-evaluation.
 prerequisite for treating the partial pilot's tier-monotonic
 recall gradient as evidence for H2. With κ = 0.768 it now is.
 
+---
+
+## 2026-05-27 -- Audit trail: spec-v3 (adversarial redesign) vs 4th-sweep H2 replication
+
+**Context**: A cross-session audit on 2026-05-27 surfaced that the
+relationship between two distinct research lines was not recorded in
+this log:
+
+* **Line A — spec-v3 / adversarial-task redesign.** Introduced in
+  commit `167e56b` (2026-04-30) and frozen at tag
+  `v0.5-experiments-spec-2026-04-30`. The commit message records the
+  empirical rationale: "Phase 1 + W1 fresh_excl reconciliation
+  (455 trials)" showed *"original H_1 claim (ploidy > single on
+  long-context tasks) is not confirmable on the benign pool. Adversarial-
+  task redesign tests..."*. The spec defined AD1--AD4 task families
+  (3α + 3β + 3γ = 9 adversarial tasks) intended to expose entrenchment
+  in cases where the benign pool could not.
+
+* **Line B — 4th-sweep H2 replication.** Active from 2026-05-21 onward
+  (PRs #50, #51, #56, #57, #58, #59 in this log). Operates on the
+  existing long-context task corpus (\`tasks_longcontext.py\` 17 tasks
+  + \`tasks_external.py\` 3 public-record incident post-mortems +
+  \`tasks_gradient.py\` 30 short/medium/long variants) and hardens the
+  pre-registration with five gates: effect-size, standardised effect,
+  Holm--Bonferroni significance, Cohen's κ ≥ 0.40 secondary-judge
+  agreement, and ≥30% external-source task share. Recall and F1\*
+  are co-primary metrics; F1 alone is treated as a structural
+  artefact-prone metric per \S\ref{sec:why-no-help}.
+
+**Audit finding** (2026-05-27): The transition from Line A to Line B
+was not explicitly recorded. \`v0.5-experiments-spec-2026-04-30\` was
+never formally retracted; AD1--AD4 task definitions were not ported
+to the main-branch \`tasks_*.py\` modules; and no PR or decision-log
+entry documents \emph{which} of the two lines is the live one or
+\emph{why}. The author of the 4th-sweep replication line (the
+2026-05-20+ KST session, this author) inherited Line B as the active
+path without re-deriving the choice.
+
+**Decision** (recording the de-facto state):
+
+1. **Line B is the live research line.** All PRs since 2026-05-21
+   (#50 through #61) advance Line B. The 44-cell partial pilot was
+   produced under Line B's task corpus, not under spec-v3's
+   AD1--AD4.
+
+2. **Line A is preserved as a tagged snapshot, not deprecated.** The
+   adversarial-task hypothesis remains a valid open question. The
+   v0.5 tag stays on the repository so a future session can either
+   resume spec-v3 work (porting AD1--AD4 to the runner) or formally
+   retract it. This log does not retract it.
+
+3. **Decision rationale (best reconstruction)**: Line B addresses the
+   same gap (Phase 1 evidence that the original H1 was not confirmable
+   on the benign pool) by *hardening the metric and gate side* rather
+   than the *task side*. Specifically, the 2026-05-27 amendment makes
+   recall co-primary, which dissolves the F1-token-bloat artefact
+   that drove most of the Phase 1 "ploidy ranks 4th" reading. If
+   the partial pilot's tier-monotonic recall gradient (Δ̄ +0.066 at
+   long tier with $\kappa = 0.768$) replicates in the full $n{=}5 \times 10$
+   sweep, the H1 / H2 claim may be defensible on the existing benign
+   corpus without an adversarial redesign — making Line A a contingent
+   follow-up rather than a prerequisite.
+
+4. **Open question (not closed by this entry)**: whether the full
+   $n{=}5 \times 10$ replication actually confirms the partial pilot's
+   tier-monotonic recall pattern. If it does not, Line A (adversarial)
+   should be revisited rather than abandoned.
+
+**Why**: A future reader (human or session) opening
+\`v0.5-experiments-spec-2026-04-30\` and \`main\` side-by-side would
+have no way to reconstruct which line was chosen or why. This
+entry closes that audit-trail gap without retroactively claiming a
+decision was made — it records the de-facto state and the most
+plausible reconstruction.
+
+---
+
+## 2026-05-27 -- Contaminated sweep dir preserved as evidence
+
+**Context**: The 4th-sweep replication's first run-dir,
+\`experiments/results/20260521_040725_effort-high_lang-en_inj-raw/\`,
+contains 23 result cells produced *before* the \`_call_claude\`
+cwd-neutral patch landed in PR #57 (2026-05-21). At that time the
+runner invoked \`claude --print\` from the repository root, which
+caused the CLI to auto-load \~500 project-memory markdown files
+into every cell, including 60+ fabrication-review casebook entries
+the same model had produced in earlier architecture-debate sessions.
+The model pattern-matched the gradient task prompts as recurrences
+of those refusal cases and produced \`F1 = 0.000\` on roughly 57\% of
+cells in the directory.
+
+A cross-session audit on 2026-05-27 observed that the contaminated
+directory was still on disk (not deleted as a previous report had
+implied) and was at risk of being aggregated into downstream
+\`analyze_stats.py\` reports.
+
+**Decision**:
+
+1. **Preserve the directory.** The 23 contaminated cells are paper-
+   thesis-relevant evidence on their own merit: they document the
+   memory-bleed contamination mechanism and the Fresh-seat refusal
+   pattern at the infrastructure layer (parallel to the within-protocol
+   memory-masking failure in \citet{mad2026memorymasking}).
+2. **Add a machine-readable marker.**
+   \`experiments/results/20260521_040725_*/.contaminated.json\` is
+   created with full provenance: contamination_source, downstream_handling,
+   do_not_use_for, use_for, valid_replacement_dir.
+3. **Update \`analyze_stats.py\` (follow-up commit, not in this
+   entry)** to detect the marker and skip the directory by default;
+   override flag \`--include-contaminated\` available for the casebook
+   analysis only.
+
+**Why**: Silently deleting the directory would lose paper-relevant
+evidence. Silently keeping it would pollute aggregate analysis.
+The marker preserves the evidence and prevents the pollution.
+
 
 

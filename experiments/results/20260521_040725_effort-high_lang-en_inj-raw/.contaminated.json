@@ -1,0 +1,36 @@
+{
+  "status": "contaminated",
+  "preserved_for": "evidence-of-fresh-refusal-pattern",
+  "discovery_date": "2026-05-21",
+  "marker_added": "2026-05-27",
+  "cell_count": 23,
+  "n_with_F1_zero": "13 of 23 cells (~57%)",
+
+  "contamination_source": {
+    "mechanism": "claude --print auto-loads ~/.claude/projects/<encoded-cwd>/memory/*.md into every model call",
+    "encoded_cwd": "-Users-ren-IdeaProjects-Paper-ploidy",
+    "memory_dir_size_at_time": "~500 markdown files including 60+ fabrication-review casebook entries the same model had produced in earlier architecture-debate sessions",
+    "leaked_pattern": "When the gradient task prompts mention 'GitLab DB' / 'GitHub MySQL 2018' / 'Knight Capital 2012', the model pattern-matches them against its own prior refusal cases ('project_gitlab_db_review_fabrication.md', 'project_github_mysql_2018_review_*.md', 'project_knight_capital_2012_*.md') and treats the new (legitimate) prompts as the next recurrence — refusing to review and producing F1 = 0.000."
+  },
+
+  "downstream_handling": {
+    "primary_action": "experiments/src/run_experiment.py:_call_claude was patched on 2026-05-21 (PR #57) to invoke claude --print from a tempfile.mkdtemp() neutral cwd. The fix moves the encoded-cwd memory dir lookup to a directory that holds zero memory files. Live probe after the patch returned MEMORY_CHECK = 0.",
+    "secondary_action": "The first 5 contaminated cells of this run (~3 file mtimes around 2026-05-21 04:00 KST) were deleted at the time of the patch. The remaining cells in this directory (23 total) were preserved because they document the refusal-pattern itself, which is paper-thesis-relevant evidence (see paper §sec:implications for prior intra-session anchoring cases R1-R12)."
+  },
+
+  "do_not_use_for": [
+    "Δ_Ploidy-Single F1 / recall / F1* aggregates",
+    "H2 falsification gate evaluation",
+    "any cross-tier or cross-task statistic"
+  ],
+
+  "use_for": [
+    "casebook entry on memory-bleed-as-contamination",
+    "fresh-refusal pattern qualitative analysis",
+    "comparison against the cwd-neutralised run at 20260521_084653_effort-high_lang-en_inj-raw to show the patch worked"
+  ],
+
+  "valid_replacement_dir": "experiments/results/20260521_084653_effort-high_lang-en_inj-raw/",
+
+  "analyze_stats_recommendation": "Skip this directory by default. analyze_stats.py should detect '.contaminated.json' and exclude the parent directory unless --include-contaminated is passed explicitly."
+}
