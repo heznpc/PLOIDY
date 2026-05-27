@@ -66,7 +66,7 @@ run_one_pass() {
       local resume_dir
       resume_dir="$(cat "$dir_file")"
       echo "$(date) — invoking with --resume ${resume_dir}" | tee -a "$log"
-      python3 "${ROOT}/experiments/src/run_experiment.py" \
+      PYTHONUNBUFFERED=1 python3 "${ROOT}/experiments/src/run_experiment.py" \
         --gradient \
         --methods "$METHODS" \
         --effort "$EFFORT" \
@@ -75,7 +75,7 @@ run_one_pass() {
         --resume "$resume_dir" >> "$log" 2>&1
     else
       echo "$(date) — first invocation" | tee -a "$log"
-      python3 "${ROOT}/experiments/src/run_experiment.py" \
+      PYTHONUNBUFFERED=1 python3 "${ROOT}/experiments/src/run_experiment.py" \
         --gradient \
         --methods "$METHODS" \
         --effort "$EFFORT" \
