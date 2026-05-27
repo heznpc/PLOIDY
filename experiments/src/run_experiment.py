@@ -559,25 +559,65 @@ def call_llm(
             return backend_fn(prompt, actual_model, eff, system_prompt)
         except (RuntimeError, subprocess.TimeoutExpired, OSError) as e:
             err_str = str(e).lower()
-            is_retriable = "cli error" in err_str or any(
-                kw in err_str
-                for kw in [
-                    "rate limit",
-                    "quota",
-                    "429",
-                    "capacity",
-                    "overloaded",
-                    "too many",
-                    "limit",
-                    "usage",
-                    "exceeded",
-                    "unavailable",
-                    "503",
-                    "502",
-                    "timeout",
-                    "hit your limit",
-                ]
-            )
+
+            # Genuine quota / capacity errors — specific phrases that real
+            # provider errors emit. Single-word substrings like "limit" or
+            # "usage" alone are forbidden here because model-refusal text or
+            # ordinary response content commonly contains them, which caused
+            # the runner to misclassify refusals as 5h-quota events (one
+            # thread once burned 166 min sleeping on a refusal that would
+            # never have succeeded on retry).
+            quota_phrases = [
+                "rate limit",
+                "rate_limit",
+                "rate-limit",
+                "you've reached your",
+                "hit your limit",
+                "usage limit",
+                "usage_limit",
+                "quota exceeded",
+                "quota_exceeded",
+                "quota:",
+                "context length",
+                "context window",
+                "too many requests",
+                "overloaded",
+                "capacity",
+                " 429",
+                " 502",
+                " 503",
+                "service unavailable",
+                "resets at",
+                "reset in",
+                "claude usage limit reached",
+            ]
+            is_transient_io = isinstance(e, (subprocess.TimeoutExpired, OSError))
+            looks_like_quota = any(p in err_str for p in quota_phrases)
+
+            # Model-refusal indicators — if the CLI returned non-zero with
+            # this kind of body, the model declined to perform the task.
+            # Retrying after a 5h sleep will produce the same refusal, so
+            # treat as non-retriable and let the cell record as ERROR so the
+            # outer dispatcher can move on (and a later resume can decide
+            # whether to re-run with a different prompt).
+            refusal_indicators = [
+                "i can't actually",
+                "i cannot actually",
+                "i won't",
+                "i will not",
+                "rather than fabricate",
+                "i'm not able to",
+                "i am not able to",
+                "i'm unable to",
+                "i am unable to",
+                "i don't have",
+                "decline to",
+                "refuse to",
+            ]
+            is_refusal = any(p in err_str for p in refusal_indicators)
+
+            is_retriable = (is_transient_io or looks_like_quota) and not is_refusal
+
             if is_retriable and attempt < max_retries - 1:
                 wait = _calc_wait_until_reset(str(e))
                 from datetime import datetime as _dt
