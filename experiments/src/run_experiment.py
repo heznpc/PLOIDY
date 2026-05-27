@@ -1788,18 +1788,18 @@ def run_experiment(
                 except (json.JSONDecodeError, KeyError):
                     pass
                 continue
-            print(f"\n  [{method_name}] running (effort={eff})...", end=" ", flush=True)
+            print(f"\n  [{method_name}] running (effort={eff})...", flush=True)
             t0 = time.time()
             reset_token_tracker()
 
             try:
                 output = method_fn(task)
                 elapsed = time.time() - t0
-                print(f"done ({elapsed:.0f}s)")
+                print(f"  [{method_name}] done ({elapsed:.0f}s)", flush=True)
 
-                print(f"  [{method_name}] judging...", end=" ", flush=True)
+                print(f"  [{method_name}] judging...", flush=True)
                 judgment = judge_result(task, method_name, output)
-                print("done")
+                print(f"  [{method_name}] judge done", flush=True)
 
                 if "scores" in judgment:
                     found = sum(1 for s in judgment["scores"] if s["verdict"] == "FOUND")
