@@ -1846,6 +1846,36 @@ def run_experiment(
     task_parallel_n = max(1, int(os.environ.get("PLOIDY_TASK_PARALLEL", "4")))
     method_parallel_n = max(1, int(os.environ.get("PLOIDY_METHOD_PARALLEL", str(len(methods)))))
 
+    # Cell counter. With task × method parallelism the start order is
+    # non-deterministic, so we hand out monotonic [N/total] tags on the ▶
+    # event. Done / skip / error events reuse the same tag. The Monitor
+    # filter ``^[▶✓⊘✗]`` is the user-facing progress channel — the verbose
+    # `[method] running...` / `done (Ns)` etc lines are kept for log-file
+    # detail but Monitor does not forward them.
+    total_cells = len(tasks) * len(methods)
+    cell_counter = {"n": 0}
+    cell_counter_lock = threading.Lock()
+
+    def _next_cell_tag() -> str:
+        with cell_counter_lock:
+            cell_counter["n"] += 1
+            return f"[{cell_counter['n']:>3}/{total_cells}]"
+
+    # Upfront header so the user knows the size of the pass and how many
+    # cells will SKIP vs RUN on resume.
+    existing_cells = sum(
+        1
+        for task in tasks
+        for method_id in methods
+        if (results_dir / f"{task.id}_{method_id}.json").exists()
+    )
+    print(
+        f"▷ pass: {total_cells} cells total | {existing_cells} resume-skip | "
+        f"{total_cells - existing_cells} to run | "
+        f"task_parallel={task_parallel_n} method_parallel={method_parallel_n}",
+        flush=True,
+    )
+
     def _run_one_method(task, method_id, method_name, method_fn):
         """Run one (task, method) cell. Per-thread token tracker via TLS.
 
@@ -1855,7 +1885,8 @@ def run_experiment(
         """
         result_file = results_dir / f"{task.id}_{method_id}.json"
         if result_file.exists():
-            print(f"\n  [{task.id}::{method_name}] SKIP (already exists)", flush=True)
+            tag = _next_cell_tag()
+            print(f"⊘ {tag} {task.id}::{method_id} — SKIP (resume)", flush=True)
             try:
                 with open(result_file) as f:
                     existing = json.load(f)
@@ -1865,7 +1896,11 @@ def run_experiment(
                 pass
             return None
 
-        print(f"\n  [{task.id}::{method_name}] running (effort={eff})...", flush=True)
+        tag = _next_cell_tag()
+        print(f"▶ {tag} {task.id}::{method_id} — running", flush=True)
+        # Keep the verbose log line for the on-disk log (judge-debugging,
+        # token-tracking detail) — Monitor filter ``^[▶✓⊘✗]`` ignores it.
+        print(f"  [{task.id}::{method_name}] running (effort={eff})...", flush=True)
         t0 = time.time()
         reset_token_tracker()
 
@@ -1897,10 +1932,19 @@ def run_experiment(
                     f"  [{task.id}::{method_name}] → {found}/{total} found, {partial} partial, {missed} missed | F1={f1:.3f} | {token_str}",
                     flush=True,
                 )
+                # User-facing per-cell completion line.
+                print(
+                    f"✓ {tag} {task.id}::{method_id} — F1={f1:.3f} ({elapsed:.0f}s)",
+                    flush=True,
+                )
             else:
                 found = partial = missed = 0
                 f1 = 0.0
                 print(f"  [{task.id}::{method_name}] → judge parse error", flush=True)
+                print(
+                    f"✓ {tag} {task.id}::{method_id} — JUDGE-PARSE-ERR ({elapsed:.0f}s)",
+                    flush=True,
+                )
 
             tokens = get_token_usage()
             result = {
@@ -1946,6 +1990,10 @@ def run_experiment(
         except Exception as e:
             elapsed = time.time() - t0
             print(f"  [{task.id}::{method_name}] ERROR ({elapsed:.0f}s): {e}", flush=True)
+            print(
+                f"✗ {tag} {task.id}::{method_id} — ERROR ({elapsed:.0f}s): {str(e)[:80]}",
+                flush=True,
+            )
             return {"task_id": task.id, "method": method_id, "effort": eff, "error": str(e)}
 
     def _run_one_task(task):
