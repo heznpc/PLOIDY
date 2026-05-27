@@ -40,7 +40,9 @@ import argparse
 import json
 import os
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -234,6 +236,7 @@ _token_tracker = {
     "calls": 0,
     "estimated": True,  # True if any call used char-based estimation
 }
+_token_tracker_lock = threading.Lock()
 
 
 def _estimate_tokens(text: str) -> int:
@@ -242,13 +245,20 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _track_tokens(prompt_tokens: int, completion_tokens: int, exact: bool = False):
-    """Accumulate token usage for current run."""
-    _token_tracker["prompt_tokens"] += prompt_tokens
-    _token_tracker["completion_tokens"] += completion_tokens
-    _token_tracker["total_tokens"] += prompt_tokens + completion_tokens
-    _token_tracker["calls"] += 1
-    if exact:
-        _token_tracker["estimated"] = False  # at least one exact measurement
+    """Accumulate token usage for current run.
+
+    Lock-protected because ``method_ploidy`` and ``method_stochastic_n`` now
+    invoke ``call_llm`` from multiple threads concurrently for the
+    position / challenge phases. Each ``call_llm`` ends with a
+    ``_track_tokens`` write to the module-level counter dict.
+    """
+    with _token_tracker_lock:
+        _token_tracker["prompt_tokens"] += prompt_tokens
+        _token_tracker["completion_tokens"] += completion_tokens
+        _token_tracker["total_tokens"] += prompt_tokens + completion_tokens
+        _token_tracker["calls"] += 1
+        if exact:
+            _token_tracker["estimated"] = False  # at least one exact measurement
 
 
 def reset_token_tracker():
@@ -1270,26 +1280,33 @@ def method_ploidy(task: Task) -> str:
     deep_n = DEEP_N
     fresh_n = FRESH_N
 
-    # POSITION phase — spawn n Deep + m Fresh sessions
-    deep_positions = []
-    for i in range(deep_n):
-        pos = call_llm(
-            f"{build_deep_prompt(task.context, task.prompt)}\n\n"
-            f"List every bug, risk, or issue you can find. Be specific and technical.\n"
-            f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW.",
-            system_prompt=sys_prompt,
-        )
-        deep_positions.append(pos)
+    # POSITION phase — n Deep + m Fresh sessions run CONCURRENTLY.
+    # The paper §sec:protocol Independent → Position separation requires each
+    # seat to write *before* seeing the other; concurrent writes satisfy that
+    # constraint because no seat has read the other's text yet. Inter-seat
+    # information leakage starts at the Challenge phase, not Position.
+    deep_prompt_text = (
+        f"{build_deep_prompt(task.context, task.prompt)}\n\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
+    fresh_prompt_text = (
+        f"{task.prompt}\n\n"
+        f"You have NO background context about this system. Review based purely on the code/question itself.\n"
+        f"List every bug, risk, or issue you can find. Be specific and technical.\n"
+        f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
+    )
 
-    fresh_positions = []
-    for i in range(fresh_n):
-        pos = call_llm(
-            f"{task.prompt}\n\n"
-            f"You have NO background context about this system. Review based purely on the code/question itself.\n"
-            f"List every bug, risk, or issue you can find. Be specific and technical.\n"
-            f"For each issue, classify your confidence as HIGH, MEDIUM, or LOW."
-        )
-        fresh_positions.append(pos)
+    with ThreadPoolExecutor(max_workers=max(2, deep_n + fresh_n)) as ex:
+        deep_futures = [
+            ex.submit(call_llm, deep_prompt_text, system_prompt=sys_prompt)
+            for _ in range(deep_n)
+        ]
+        fresh_futures = [
+            ex.submit(call_llm, fresh_prompt_text) for _ in range(fresh_n)
+        ]
+        deep_positions = [f.result() for f in deep_futures]
+        fresh_positions = [f.result() for f in fresh_futures]
 
     # Aggregate positions for challenge phase
     deep_aggregate = "\n\n".join(
@@ -1299,8 +1316,10 @@ def method_ploidy(task: Task) -> str:
         f"--- Fresh Session {i + 1}/{fresh_n} ---\n{p}" for i, p in enumerate(fresh_positions)
     )
 
-    # CHALLENGE phase — one representative challenge per side
-    deep_challenge = call_llm(
+    # CHALLENGE phase — deep_challenge and fresh_challenge are independent
+    # (each only reads the previous-phase aggregates, never the other's
+    # challenge output) so they also run concurrently.
+    deep_challenge_prompt = (
         f"You are an experienced reviewer with full project context. "
         f"{'Your team' if deep_n > 1 else 'You'} found:\n\n{deep_aggregate}\n\n"
         f"Now, {'reviewers' if fresh_n > 1 else 'a reviewer'} with NO project context found:\n\n"
@@ -1311,7 +1330,7 @@ def method_ploidy(task: Task) -> str:
         f"- SYNTHESIZE: partially right, here's the nuance\n\n"
         f"Also list anything your side found that they missed."
     )
-    fresh_challenge = call_llm(
+    fresh_challenge_prompt = (
         f"You are a fresh reviewer with NO project context. "
         f"{'Your team' if fresh_n > 1 else 'You'} found:\n\n{fresh_aggregate}\n\n"
         f"Now, {'reviewers' if deep_n > 1 else 'a reviewer'} with deep project context found:\n\n"
@@ -1322,6 +1341,12 @@ def method_ploidy(task: Task) -> str:
         f"- SYNTHESIZE: partially right, here's the nuance\n\n"
         f"Also list anything your side found that they missed."
     )
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        deep_chal_fut = ex.submit(call_llm, deep_challenge_prompt)
+        fresh_chal_fut = ex.submit(call_llm, fresh_challenge_prompt)
+        deep_challenge = deep_chal_fut.result()
+        fresh_challenge = fresh_chal_fut.result()
 
     # CONVERGENCE
     session_desc = f"Deep({deep_n}) × Fresh({fresh_n})"
