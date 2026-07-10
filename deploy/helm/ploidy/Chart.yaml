@@ -5,11 +5,11 @@ description: |
   depths, better decisions. Single-replica chart because the state backend
   is a local SQLite file; horizontal scaling requires a different backend.
 type: application
-version: 0.1.0
-appVersion: "0.3.3"
-home: https://github.com/heznpc/ploidy-research
+version: 0.4.0
+appVersion: "0.4.0"
+home: https://github.com/heznpc/PLOIDY
 sources:
-  - https://github.com/heznpc/ploidy-research
+  - https://github.com/heznpc/PLOIDY
 keywords:
   - mcp
   - multi-agent

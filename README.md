@@ -1,34 +1,33 @@
 # Ploidy
 
-**Intentional context asymmetry to reduce confirmation bias in LLMs.**
+**Context-asymmetric structured debate for difficult decisions.**
 
-[![CI](https://github.com/heznpc/ploidy-research/actions/workflows/ci.yml/badge.svg)](https://github.com/heznpc/ploidy-research/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-heznpc.github.io%2Fploidy-research-blue)](https://heznpc.github.io/ploidy-research/)
+[![CI](https://github.com/heznpc/PLOIDY/actions/workflows/ci.yml/badge.svg)](https://github.com/heznpc/PLOIDY/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-heznpc.github.io%2FPLOIDY-blue)](https://heznpc.github.io/PLOIDY/)
+[![PyPI](https://img.shields.io/pypi/v/ploidy)](https://pypi.org/project/ploidy/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 
-## Why
+Ploidy gives one side of a debate project context and keeps the other
+side fresh, then records positions before either side can anchor on the
+other. It ships as a Python 3.11+ MCP server with SQLite persistence.
 
-Ask the same model the same question in separate sessions. You'll get different answers every time — some agree, some disagree, some equivocate. If you continue in just one session, the model's first stochastic response becomes an anchor. It reinforces its own prior, the user builds on it, and the session locks into a trajectory that prompt engineering [cannot undo](https://arxiv.org/abs/2603.12123).
-
-This means identical models, identical prompts, identical users — but different project outcomes depending on which random sample landed first. The user is in a probability lottery without knowing it. Task completion time varies, task success varies, and perceived "model performance" varies — all from the same model.
-
-This is not the same problem that multi-agent teams solve. Agent teams (CrewAI, MetaGPT, Claude Agent Teams) divide labor across models for throughput. More hands, same perspective. Under symmetric information, scaling agents is [mathematically equivalent to majority voting](https://arxiv.org/abs/2508.17536) over identically biased samples — it cannot improve expected correctness.
-
-Ploidy takes the orthogonal approach: **deliberately create context asymmetry within the same model, then make the asymmetric sessions debate**. A deep session carries full project context. A fresh session starts with zero prior commitment. When they disagree, the cause is isolatable — one has context the other doesn't. That disagreement is the signal.
-
-## Quick Start
+## Install
 
 ```bash
-# Install
-pip install ploidy              # core server
-pip install ploidy[api]         # + auto-debate mode (requires OpenAI SDK)
+pip install ploidy
 ```
 
-### MCP Client Configuration (stdio — recommended)
+Add the API extra only when the server itself will generate an automatic
+debate:
 
-The default transport is `stdio`, so the MCP client spawns the server on
-demand and there is no separate process to manage:
+```bash
+pip install "ploidy[api]"
+```
+
+## Recommended local setup: stdio
+
+`stdio` is the default transport. One MCP client starts one server on
+demand, so there is no port or background process to manage.
 
 ```json
 {
@@ -42,153 +41,138 @@ demand and there is no separate process to manage:
 }
 ```
 
-### Recommended: `/ploidy` slash command (Claude Code)
+The primary tool is `debate`:
 
+- `mode="solo"`: the caller supplies independently generated Deep and
+  Fresh positions. No external model API is required.
+- `mode="auto"`: the server generates both sides through an
+  OpenAI-compatible API. Non-empty `context_documents` are required so
+  the Deep and Fresh sides are actually asymmetric.
+
+Example auto call:
+
+```python
+await debate(
+    prompt="Should we split the ingestion service?",
+    mode="auto",
+    context_documents=["Current topology, incident history, and constraints…"],
+    context_sources=["architecture-notes"],
+)
 ```
-/ploidy Should we rewrite the ingestion pipeline in Rust?
+
+Configure the API backend before using auto mode:
+
+```bash
+export PLOIDY_API_BASE_URL=https://api.openai.com/v1
+export PLOIDY_API_KEY=...
+export PLOIDY_API_MODEL=your-model
 ```
 
-The command ([`.claude/commands/ploidy.md`](.claude/commands/ploidy.md))
-writes your deep-context analysis, spawns a fresh sub-agent for the
-zero-context side, calls the MCP tool with both texts, and renders the
-synthesis. No API key needed.
+## Shared server: Streamable HTTP
 
-### Single-terminal flow (direct tool call)
-
-Inside one MCP client session, ask the assistant to write two analyses
-— one with full project context, one from a fresh sub-agent that only
-sees the prompt — then call `debate(mode="solo", ...)` with both texts.
-Ploidy persists the debate, classifies the challenges, and returns the
-convergence in a single tool call. See
-[`docs/v0.4-migration.md`](docs/v0.4-migration.md) for the full API.
-
-### Two-terminal flow (cross-session, multi-client)
-
-For the original cross-session experience, run the server over HTTP and
-configure each MCP client to point at it:
+Use HTTP when multiple MCP clients must share one debate or when Ploidy
+is deployed as a service:
 
 ```bash
 PLOIDY_TRANSPORT=streamable-http python3 -m ploidy
+export PLOIDY_URL=http://127.0.0.1:8765
 ```
+
+Configure each client with `${PLOIDY_URL}/mcp` (substitute the value;
+JSON does not expand shell variables):
 
 ```json
 {
   "mcpServers": {
     "ploidy": {
       "type": "streamable-http",
-      "url": "http://localhost:8765/mcp"
+      "url": "http://127.0.0.1:8765/mcp"
     }
   }
 }
 ```
 
-**Terminal 1 (Deep session)** — tell your AI:
-> "Start a Ploidy debate: Should we use monorepo or polyrepo?"
+`PLOIDY_URL` is the base URL used by `ploidy-ask` and other HTTP
+clients. The MCP endpoint is `/mcp`, and the live HTTP/SSE endpoint is
+`/v1/debate/stream`.
 
-**Terminal 2 (Fresh session)** — tell your AI:
-> "Join Ploidy debate a1b2c3d4e5f6"
+## MCP tools
 
-## How It Works
+Ploidy 0.4.0 exposes exactly 13 tools. New integrations should use the
+unified `debate` tool. The other 12 remain available for explicit
+two-client, phase-by-phase, history, cancellation, and HITL workflows.
 
-```
-Terminal 1 (Deep)              Terminal 2 (Fresh)
-[Full project context]         [Zero context]
-        |                              |
-        └──── debate/start ──→ Ploidy Server ←── debate/join ────┘
-                               (port 8765)
-              position ──────→ [SQLite + WAL] ←────── position
-              challenge ─────→ [State Machine] ←───── challenge
-              converge ──────→ [Convergence]  ←────── converge
-                                    ↓
-                            Structured Result
-                         (agreements, disagreements,
-                          confidence score)
-```
+| Tool | Purpose |
+|---|---|
+| `debate` | Unified `auto` or `solo` debate |
+| `debate_start` | Create a Deep session |
+| `debate_join` | Join as Fresh or Semi-Fresh |
+| `debate_position` | Submit an independent position |
+| `debate_challenge` | Submit a semantic challenge |
+| `debate_converge` | Produce the convergence result |
+| `debate_cancel` | Cancel an active debate |
+| `debate_delete` | Permanently delete a debate |
+| `debate_status` | Read current state |
+| `debate_history` | List visible debate history |
+| `debate_solo` | Legacy alias for caller-supplied debate |
+| `debate_auto` | Legacy alias for API-generated debate |
+| `debate_review` | Approve, override, or reject a paused auto debate |
 
-Sessions debate through typed semantic actions (agree, challenge, propose alternative, synthesize) across a five-phase protocol: Independent → Position → Challenge → Convergence → Complete. The Context Asymmetry Spectrum ranges from Deep (full context) through Semi-Fresh (compressed context, passively or actively delivered) to Fresh (zero context).
+## Service configuration
 
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `debate_start` | Begin a debate with a prompt |
-| `debate_join` | Join as a fresh (zero-context) session |
-| `debate_position` | Submit your stance |
-| `debate_challenge` | Critique with semantic actions (agree/challenge/propose_alternative/synthesize) |
-| `debate_converge` | Trigger convergence analysis |
-| `debate_status` | Check current state |
-| `debate_cancel` | Cancel in progress |
-| `debate_delete` | Permanently delete |
-| `debate_history` | List past debates |
-| `debate_auto` | Run a full two-sided debate automatically via API |
-| `debate_review` | Review and resume a paused auto-debate (HITL) |
-| `debate_solo` | Caller-supplied positions; converge in one call (no API key) |
-
-## Configuration
-
-All via environment variables:
+Common environment variables:
 
 ```bash
-PLOIDY_PORT=8765              # Server port
-PLOIDY_DB_PATH=~/.ploidy/ploidy.db  # Database location
-PLOIDY_LOG_LEVEL=INFO         # Logging level
-PLOIDY_AUTH_TOKEN=secret      # Bearer token auth (optional)
-PLOIDY_API_BASE_URL=https://api.openai.com/v1  # Optional auto-debate backend
-PLOIDY_API_KEY=...            # Optional API key for auto mode
-PLOIDY_API_MODEL=gpt-5.4      # Optional model override for auto mode
+PLOIDY_TRANSPORT=stdio             # stdio (default) or streamable-http
+PLOIDY_PORT=8765
+PLOIDY_DB_PATH=~/.ploidy/ploidy.db
+PLOIDY_MAX_CONTEXT_TOKENS=20000    # recommended for hosted auto mode
+PLOIDY_RATE_CAPACITY=20
+PLOIDY_RATE_PER_SEC=1
+PLOIDY_RETENTION_DAYS=30
 ```
 
-## Single-Terminal Auto Mode
+Authentication modes and their limits:
 
-If you configure an OpenAI-compatible API backend, Ploidy can run both sides of the
-debate automatically in one tool call. In `debate_auto`, the server generates:
+- Admission-controlled self-hosting: `PLOIDY_AUTH_MODE=bearer` with
+  `PLOIDY_TOKENS='{"token":"tenant"}'`.
+- OAuth interoperability: `PLOIDY_AUTH_MODE=oauth` and an exact public
+  `PLOIDY_OAUTH_ISSUER`; v0.4.0 auto-approves clients and therefore is
+  not user login or public admission control.
+- Migration only: `PLOIDY_AUTH_MODE=both` adds the static-token fallback.
 
-- an Experienced position using the provided `context_documents`
-- a Fresh or Semi-Fresh counter-position
-- challenge messages from both sides
-- the final convergence analysis
+Bearer mode without a configured token is intentionally unauthenticated
+and is suitable only for loopback development. Public services need a
+private ingress/gateway or controlled static tokens until OAuth gains
+resource-owner login and consent.
 
-Fresh auto sessions must use `delivery_mode="none"`. Semi-Fresh auto sessions must
-use `delivery_mode="passive"` or `delivery_mode="active"`.
+## Container
 
-## Docker
+The published image is immutable by release version:
 
 ```bash
-docker compose up
+docker run --rm \
+  -p 127.0.0.1:8765:8765 \
+  -v ploidy-data:/data \
+  ghcr.io/heznpc/ploidy:0.4.0
 ```
 
-## Claude.ai Custom Connector
+Or run the checked-in Compose configuration:
 
-Deploy once, register once, use from Claude.ai web / mobile:
-
-```sh
-# Fly.io (recommended prototype)
-flyctl launch --no-deploy --copy-config --config deploy/fly/fly.toml
-flyctl secrets set PLOIDY_TOKENS='{"<token>": "<tenant>"}'
-flyctl deploy --config deploy/fly/fly.toml
+```bash
+docker compose up --build
 ```
 
-Then in Claude.ai → Settings → Connectors → Add custom → point at
-`https://<your-app>.fly.dev/mcp` with the token as bearer auth. Full
-walkthrough in [`docs/custom-connector.md`](docs/custom-connector.md).
+The image defaults to `streamable-http` and contains the API,
+dashboard, metrics, Redis, and CLI runtime extras.
 
 ## Documentation
 
-- [Getting Started](https://heznpc.github.io/ploidy-research/getting-started/) — Install and first debate
-- [How It Works](https://heznpc.github.io/ploidy-research/how-it-works/) — Core concept
-- [Architecture](https://heznpc.github.io/ploidy-research/architecture/) — Technical overview
-- [API Reference](https://heznpc.github.io/ploidy-research/api-reference/) — Tool documentation
-- [Research](https://heznpc.github.io/ploidy-research/research/) — Academic positioning
-
-## Research
-
-This monorepo contains both the MCP server and the **mechanism paper** that the software accompanies. See `paper/main.tex` for the preprint and `planning/` for drafts, review notes, and the shared research program. The companion **theory paper** ("The Accumulation–Renewal Dilemma") lives in a sibling repository: [heznpc/lifespan](https://github.com/heznpc/lifespan).
-
-### Positioning
-
-Ploidy extends Cross-Context Review ([Song 2026](https://arxiv.org/abs/2603.12123)) from unidirectional fresh-session review to bidirectional structured debate. The intersection of context asymmetry × same-model debate × structured protocol has zero published papers as of March 2026.
-
-In pilot experiments, context asymmetry shows no benefit on short-context tasks where entrenchment does not occur — but on long-context tasks with anchoring bias, asymmetric debate achieves the highest ground-truth recall (5/5 vs. single session's 3/5). These results bound where the intervention applies.
+- [Getting started](https://heznpc.github.io/PLOIDY/getting-started/)
+- [API reference](https://heznpc.github.io/PLOIDY/api-reference/)
+- [v0.4 migration](https://heznpc.github.io/PLOIDY/v0.4-migration/)
+- [Custom Connector](https://heznpc.github.io/PLOIDY/custom-connector/)
+- [Deployment](deploy/README.md)
 
 ## License
 

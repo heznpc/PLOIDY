@@ -25,7 +25,7 @@ covered by those operators' own terms.
 ## 2. What Ploidy is
 
 Ploidy is research software distributed under the
-[MIT License](../LICENSE). It runs structured debates between
+[MIT License](https://github.com/heznpc/PLOIDY/blob/main/LICENSE). It runs structured debates between
 sessions of the same LLM with different context depths and
 returns a synthesised result. It is **provided as-is**, without
 warranty of any kind (Section 9).
@@ -90,7 +90,7 @@ protection regime (GDPR, CCPA/CPRA, PIPA, LGPD, etc.).
 
 ### 7.1 Software
 The Ploidy software is licensed under the
-[MIT License](../LICENSE). You may use, copy, modify, merge,
+[MIT License](https://github.com/heznpc/PLOIDY/blob/main/LICENSE). You may use, copy, modify, merge,
 publish, distribute, sublicense, and / or sell copies of the
 software subject to the license terms.
 
@@ -129,7 +129,7 @@ The software and the service are provided **"AS IS"** and
 implied, including but not limited to the implied warranties
 of merchantability, fitness for a particular purpose, and
 non-infringement. See the
-[MIT License](../LICENSE) for the full software warranty
+[MIT License](https://github.com/heznpc/PLOIDY/blob/main/LICENSE) for the full software warranty
 disclaimer.
 
 Some jurisdictions (including parts of the EEA and US state
@@ -250,7 +250,7 @@ as part of a class action.
 ## 16. Contact
 
 Upstream: the maintainer listed in `pyproject.toml`. Security
-issues: [`SECURITY.md`](../SECURITY.md). Hosted deployment:
+issues: [`SECURITY.md`](https://github.com/heznpc/PLOIDY/blob/main/SECURITY.md). Hosted deployment:
 the specific operator of that instance.
 
 ---

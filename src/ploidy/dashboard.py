@@ -17,6 +17,8 @@ import logging
 import os
 from pathlib import Path
 
+from ploidy import __version__
+
 logger = logging.getLogger("ploidy.dashboard")
 
 _DASH_PORT = int(os.environ.get("PLOIDY_DASH_PORT", "8766"))
@@ -134,14 +136,16 @@ _BASE_HTML = """<!DOCTYPE html>
 <div class="container">
   {{CONTENT}}
 </div>
-<footer>Ploidy v0.2 &mdash; Context-Asymmetric Structured Debate</footer>
+<footer>Ploidy v{{VERSION}} &mdash; Context-Asymmetric Structured Debate</footer>
 </body>
 </html>"""
 
 
 def _render(content: str) -> str:
     """Render content into the base HTML template."""
-    return _BASE_HTML.replace("{{CONTENT}}", content)
+    return _BASE_HTML.replace("{{CONTENT}}", content).replace(
+        "{{VERSION}}", html.escape(__version__)
+    )
 
 
 def _badge(status: str) -> str:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ploidy"
-version = "0.3.3"
+version = "0.4.0"
 description = "Cross-session multi-agent debate MCP server. Same model, different context depths, better decisions."
 readme = "README.md"
 license = "MIT"
@@ -86,4 +86,22 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "slow: end-to-end tests that spawn a real subprocess (deselect with '-m \"not slow\"')",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/docs",
+    "/deploy",
+    "/scripts",
+    "/README.md",
+    "/LICENSE",
+    "/SECURITY.md",
+    "/CITATION.cff",
+    "/Dockerfile",
+    "/docker-compose.yml",
+    "/.dockerignore",
+    "/mkdocs.yml",
+    "/uv.lock",
 ]

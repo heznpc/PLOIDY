@@ -5,7 +5,7 @@
 
 image:
   repository: ghcr.io/heznpc/ploidy
-  tag: latest
+  tag: "0.4.0"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -42,14 +42,15 @@ env:
   PLOIDY_PORT: "8765"
   PLOIDY_DB_PATH: /data/ploidy.db
   PLOIDY_LOG_LEVEL: INFO
-  # Retention defaults off; set to >0 to enable a background purge.
-  # PLOIDY_RETENTION_DAYS: "30"
-  # Rate limit defaults off.
-  # PLOIDY_RATE_CAPACITY: "20"
-  # PLOIDY_RATE_PER_SEC: "1"
+  PLOIDY_AUTH_MODE: bearer
+  PLOIDY_MAX_CONTEXT_DOCS: "10"
+  PLOIDY_MAX_CONTEXT_TOKENS: "20000"
+  PLOIDY_RATE_CAPACITY: "20"
+  PLOIDY_RATE_PER_SEC: "1"
+  PLOIDY_RETENTION_DAYS: "30"
 
 # Secrets. Values land in a Secret; keys are mounted as env vars.
-# Populate at install time via `--set-string secrets.PLOIDY_AUTH_TOKEN=...`
+# Populate at install time via `--set-string secrets.PLOIDY_TOKENS=...`
 # or point `existingSecret` at a pre-created Secret holding the same keys.
 secrets: {}
 existingSecret: ""

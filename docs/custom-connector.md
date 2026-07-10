@@ -1,107 +1,118 @@
-# Ploidy as a Claude.ai Custom Connector
+# Ploidy as a Custom Connector
 
-Goal: register Ploidy as a connector so users in the Claude.ai web / mobile
-app can call `debate(...)` without installing Claude Code, and see the
-answer-first `rendered_markdown` payload with the collapsed transcript
-sections inline.
+A Custom Connector needs a publicly reachable Streamable HTTP server.
+Local `stdio` configuration is not visible to a hosted chat client.
 
-## Prerequisites
+!!! danger "OAuth in 0.4.0 is not admission control"
 
-- A deployed Ploidy instance reachable over public HTTPS. The shortest
-  recipe is [fly.io](../deploy/fly/README.md); the Helm chart at
-  [`deploy/helm/ploidy`](../deploy/helm/) works for anyone already on
-  kubernetes. Bare `docker compose` works if you terminate TLS in
-  front (Caddy / Traefik / nginx).
-- A Ploidy tenant token (`PLOIDY_TOKENS`). The deploy recipes show how
-  to mint one with `openssl rand -hex 24`.
-- (Optional) `PLOIDY_API_KEY` etc. if you want `mode="auto"` to work.
+    Ploidy 0.4.0 implements discovery, DCR, PKCE, token issuance, and
+    tenant scoping, but its authorization endpoint auto-approves every
+    registered client. There is no resource-owner login, consent screen,
+    or operator allowlist. New client IDs can also bypass per-client rate
+    buckets. OAuth mode is suitable for protocol interoperability tests,
+    not unrestricted public access or a directory submission.
 
-## Registration
+    Put the service behind a private network or admission gateway, or use
+    static bearer tokens when access must be controlled.
 
-Claude.ai → Settings → **Connectors** → **Add custom connector**.
+## Admission-controlled deployment
+
+Set a canonical URL for clients and configure a random tenant token:
+
+```bash
+export PLOIDY_URL=https://ploidy.example.com
+export PLOIDY_TRANSPORT=streamable-http
+export PLOIDY_AUTH_MODE=bearer
+export PLOIDY_TOKENS='{"replace-with-random-token":"tenant-a"}'
+```
+
+Supported deployment recipes:
+
+- [Fly.io](https://github.com/heznpc/PLOIDY/blob/main/deploy/fly/README.md)
+- [Helm](https://github.com/heznpc/PLOIDY/tree/main/deploy/helm/ploidy)
+- [Plain Kubernetes](https://github.com/heznpc/PLOIDY/blob/main/deploy/kubernetes/ploidy.yaml)
+
+They use the immutable `0.4.0` image tag and bounded context, rate, and
+retention defaults. A gateway remains responsible for TLS, network
+admission, and abuse controls beyond the service's token map.
+
+## Register with static bearer auth
+
+In the connector settings, add:
 
 | Field | Value |
 |---|---|
-| Name | **Ploidy** |
-| Description | *Cross-session multi-agent debate with collapsed transcripts.* |
-| URL | `https://<your-deploy>/mcp` |
-| Authentication | **Bearer token** — the value from `PLOIDY_TOKENS` |
+| Name | `Ploidy` |
+| URL | `${PLOIDY_URL}/mcp` after substituting the public origin |
+| Authentication | Bearer token from `PLOIDY_TOKENS` |
 
-Save. Claude.ai fetches `tools/list` and registers every tool your
-Ploidy server exposes.
+Ploidy exposes 13 tools. For a simple surface, enable only `debate` in
+clients that provide per-tool toggles. The remaining 12 tools are the
+0.4.0 compatibility surface; there is no supported server flag that
+hides them.
 
-## Recommended: surface only `debate`
+## OAuth interoperability evaluation
 
-The connector surface matters for discoverability — showing all 13
-tools makes the UI look busy and encourages the LLM to pick the wrong
-one. Two options:
+To exercise discovery, DCR, PKCE, token issuance, and OAuth tenant
+ownership in a controlled environment:
 
-1. **Hide legacy tools in the connector UI.** Claude.ai lets you toggle
-   individual tools on/off; only enable `debate`.
-2. **Deploy a lean surface.** Set `PLOIDY_HIDE_LEGACY_TOOLS=1` on the
-   server (if supported in your Ploidy version — tracked as a future
-   env flag) or fork the tool list in `server.py`.
-
-Option 1 is zero-code and recommended for a prototype.
-
-## Verifying end-to-end
-
-In the Claude.ai chat, ask:
-
-> Use Ploidy to debate: should we deprecate the 12 legacy tools in v0.5?
-
-Expected output shape (rendered from `rendered_markdown`):
-
-```markdown
-## Ploidy debate result
-
-**Confidence: 68%** · ✅ 2 · 🟡 1 · 🔴 0
-
-▸ Synthesis
-▸ Full transcript
-▸ Meta-analysis    (only if PLOIDY_LLM_CONVERGENCE=1)
-
----
-mode: `auto` · debate_id: `…`
+```bash
+export PLOIDY_AUTH_MODE=oauth
+export PLOIDY_OAUTH_ISSUER=$PLOIDY_URL
 ```
 
-Clicking the collapsed sections expands them inline. That's the UX.
+The issuer must be the exact external HTTPS origin without `/mcp`.
+`PLOIDY_AUTH_MODE=both` adds the static-token fallback during a bounded
+migration. Neither mode adds resource-owner authentication: an external
+gateway or a future consent/login implementation is still required for
+public admission control.
 
-## Live progress via SSE
+## First call
 
-The MCP tool call is a request/response — Claude waits until the full
-debate converges, which feels slow. For a web-UI experience with live
-phase-by-phase progress, hit the HTTP-only streaming route directly:
+Auto mode must include Deep-only context:
 
+> Use Ploidy `debate` in auto mode to decide whether to split the
+> ingestion service. Pass the architecture summary and recent incident
+> constraints as `context_documents`, with matching
+> `context_sources`.
+
+An auto request without non-empty `context_documents` is rejected. The
+completed response includes `rendered_markdown`, structured points, the
+convergence synthesis, and a context provenance manifest.
+
+## Live HTTP/SSE clients
+
+Custom Connector tool calls complete as one MCP response. A separate
+web or bot client can show phase progress from:
+
+```text
+POST ${PLOIDY_URL}/v1/debate/stream
 ```
-POST https://<your-deploy>/v1/debate/stream
-Authorization: Bearer <token>
-Content-Type: application/json
 
-{"prompt": "...", "deep_n": 1, "fresh_n": 1}
+```bash
+curl -N "$PLOIDY_URL/v1/debate/stream" \
+  -H "Authorization: Bearer $PLOIDY_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  --data '{
+    "prompt": "Should we split the ingestion service?",
+    "context_documents": ["Architecture and incident constraints…"],
+    "context_sources": ["architecture-review"]
+  }'
 ```
 
-Response is `text/event-stream` with frames typed
-`phase_started` / `positions_generated` / `challenges_generated` /
-`result` / `error`. A 30-line HTML page with `EventSource` is enough
-to render a Grok-Heavy-style progress UI on top.
+Missing or invalid bearer credentials return `401`. If the client
+disconnects, the running task is cancelled and active debate state is
+cleaned up.
 
 ## Pre-launch checklist
 
-Before opening the connector to a wider audience:
-
-- [ ] `PLOIDY_RETENTION_DAYS` set so SQLite does not grow unbounded.
-- [ ] Per-tenant rate limit via `PLOIDY_RATE_CAPACITY` /
-      `PLOIDY_RATE_PER_SEC`.
-- [ ] `/metrics` endpoint is not publicly reachable (proxy or
-      firewall it).
-- [ ] `PLOIDY_DASH_TOKEN` set so the dashboard is not world-readable.
-- [ ] Tenant tokens rotated from the development defaults.
-- [ ] Backups of `$PLOIDY_DB_PATH` (for fly.io: `flyctl volumes
-      snapshot create`).
-
-## When the Connector Registry approves
-
-If Anthropic's Connector Registry eventually lists Ploidy, the per-user
-setup collapses to one click. Until then, the Custom Connector path
-above is the fastest way to put it in front of real users.
+- [ ] A private ingress/gateway or static bearer token controls admission.
+- [ ] OAuth is labelled protocol-only until owner login/consent exists.
+- [ ] `PLOIDY_MAX_CONTEXT_TOKENS` is bounded.
+- [ ] Rate limiting also exists at the gateway; DCR client IDs are not a
+      durable anti-abuse identity.
+- [ ] `PLOIDY_RETENTION_DAYS` is non-zero.
+- [ ] `/metrics` is limited to trusted monitoring ingress.
+- [ ] The dashboard binds to loopback or has `PLOIDY_DASH_TOKEN`.
+- [ ] SQLite data is backed up and the service remains single-replica.

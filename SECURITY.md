@@ -15,7 +15,7 @@ vulnerabilities.**
 
 Preferred channel — **GitHub Security Advisories**:
 
-1. Go to <https://github.com/heznpc/ploidy-research/security/advisories/new>
+1. Go to <https://github.com/heznpc/PLOIDY/security/advisories/new>
 2. Provide a reproducer and your assessment of impact.
 3. We will acknowledge within 72 hours.
 

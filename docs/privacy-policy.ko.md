@@ -8,7 +8,7 @@
 
 **시행일: 2026-04-23**  ·  **버전: 1.0-draft**
 
-영문 원본: [`/docs/privacy-policy.md`](../privacy-policy.md)
+영문 원본: [`/docs/privacy-policy.md`](privacy-policy.md)
 (해석 상충 시 영문 원본이 우선합니다.)
 
 ---
@@ -19,7 +19,7 @@
 
 - **오픈소스 Ploidy MCP 서버** 소프트웨어 자체.
 - 향후 공개될 **유지관리자 직접 운영 배포본**
-  ([`directory-submission.md`](../directory-submission.md)의 URL).
+  ([`directory-submission.md`](directory-submission.md)의 URL).
 
 동일 소프트웨어를 사용하는 제3자 배포는 해당 운영자의 별도
 방침이 적용되며, 본 문서는 소프트웨어 동작을 기술합니다.
@@ -27,7 +27,7 @@
 ## 1. 개인정보처리자 / 개인정보보호책임자
 
 - **처리자**: `pyproject.toml`에 표기된 유지관리자(heznpc).
-- **연락처**: 보안 사안은 [`SECURITY.md`](../../SECURITY.md).
+- **연락처**: 보안 사안은 [`SECURITY.md`](https://github.com/heznpc/PLOIDY/blob/main/SECURITY.md).
   일반 개인정보 문의는 레포지토리 GitHub Issues의 `privacy`
   라벨 또는 Zenodo 레코드의 이메일.
 - **개인정보보호책임자(DPO) 지정**: PIPA 제31조 의무지정
@@ -37,7 +37,8 @@
 ## 2. 수집·처리하는 개인정보 (PIPA 제15조·제17조)
 
 로컬 SQLite DB (`PLOIDY_DB_PATH`, 기본값
-`~/.ploidy/ploidy.db`, `0o700` 소유자 전용 권한)에 저장:
+`~/.ploidy/ploidy.db`; 상위 디렉터리는 `0700`, 데이터베이스와
+`-wal` / `-shm` 파일은 `0600` 권한)에 저장:
 
 | 항목 | 필드 | 수집 출처 | 처리 목적 | 법적 근거 |
 |---|---|---|---|---|
@@ -142,14 +143,15 @@ EEA(GDPR §15-22), 영국(UK GDPR), 캘리포니아(CCPA/CPRA),
   (`hmac.compare_digest`) 사용.
 - OAuth 2.0 모드(`PLOIDY_AUTH_MODE=oauth`)는 PKCE S256,
   단일 사용 인가 코드, 리프레시 토큰 회전 강제.
-- DB 파일은 `0o700` (소유자 전용) 권한으로 생성.
+- DB 디렉터리는 `0700`, 데이터베이스와 SQLite `-wal` / `-shm`
+  사이드카 파일은 `0600` 권한으로 유지.
 - 테넌트별 속도 제한(`PLOIDY_RATE_CAPACITY`,
   `PLOIDY_RATE_PER_SEC`) 제공.
 - 액세스 토큰은 32바이트(256비트) 불투명 무작위 문자열로
   DB에 저장 — 해시 아님, 서명 아님. 방어선은 폐기(revocation).
 
 완벽한 보안은 없습니다. 취약점은
-[`SECURITY.md`](../../SECURITY.md)로 비공개 신고.
+[`SECURITY.md`](https://github.com/heznpc/PLOIDY/blob/main/SECURITY.md)로 비공개 신고.
 
 ## 9. 아동의 개인정보
 

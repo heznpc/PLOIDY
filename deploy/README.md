@@ -1,58 +1,80 @@
-# Deploying Ploidy
+# Deploying Ploidy 0.4.0
 
-Three supported paths, in ascending order of surface area:
+All checked-in deployment recipes use
+`ghcr.io/heznpc/ploidy:0.4.0`. They run one replica because persistence
+is a local SQLite file.
 
-- [`fly/`](fly/README.md) — single-command deploy on fly.io, free tier, ideal
-  prototype backend for a Claude.ai Custom Connector.
-- [`kubernetes/ploidy.yaml`](kubernetes/ploidy.yaml) — plain `kubectl apply`
-  manifest.
-- [`helm/ploidy/`](helm/ploidy/) — full parameterised Helm chart with
-  optional ServiceMonitor / NetworkPolicy.
+- [Fly.io](fly/README.md): HTTPS with controlled static bearer admission
+- [Plain Kubernetes](kubernetes/ploidy.yaml): single-file baseline
+- [Helm](helm/ploidy/): configurable chart with optional
+  ServiceMonitor and NetworkPolicy
 
-After deploy, see [`docs/custom-connector.md`](../docs/custom-connector.md)
-for the Claude.ai registration walkthrough.
+Every recipe enables bounded service defaults:
 
----
+| Setting | Default |
+|---|---:|
+| `PLOIDY_MAX_CONTEXT_DOCS` | `10` |
+| `PLOIDY_MAX_CONTEXT_TOKENS` | `20000` |
+| `PLOIDY_RATE_CAPACITY` | `20` |
+| `PLOIDY_RATE_PER_SEC` | `1` |
+| `PLOIDY_RETENTION_DAYS` | `30` |
 
-## Helm chart
+## Helm with static bearer authentication
 
-```sh
+Create the token secret outside Helm so it is not stored in shell
+history as a chart value:
+
+```bash
+export PLOIDY_API_TOKEN=$(openssl rand -hex 32)
+kubectl create secret generic ploidy-auth \
+  --from-literal=PLOIDY_TOKENS="{\"$PLOIDY_API_TOKEN\":\"tenant-a\"}"
+
 helm install ploidy deploy/helm/ploidy \
-    --set-string secrets.PLOIDY_AUTH_TOKEN=$(openssl rand -hex 24) \
-    --set image.tag=0.3.3
+  --set existingSecret=ploidy-auth
 ```
 
-Switches worth knowing:
+The chart's default image tag and `appVersion` are both `0.4.0`.
 
-- `persistence.size` — grow the PVC when retention is off and history builds up.
-- `env.PLOIDY_RETENTION_DAYS` — enable periodic purge (the service also exposes
-  an ad-hoc `python -m ploidy.retention purge --days N`).
-- `serviceMonitor.enabled` — scrape `GET /metrics` via kube-prometheus-stack.
-- `networkPolicy.enabled` — lock ingress to the same namespace plus
-  `networkPolicy.allowFromNamespaces` (e.g. `["monitoring"]`).
-- `secrets` vs `existingSecret` — pre-create a Secret externally (e.g. via
-  external-secrets/SOPS) and point `existingSecret` at it.
+## Helm OAuth interoperability test
 
-Tokens expected in the Secret when using `existingSecret`:
+OAuth mode in 0.4.0 auto-approves dynamically registered clients and has
+no resource-owner login or consent. Run it only behind controlled ingress;
+it is not sufficient public access control or directory-ready auth.
 
-- `PLOIDY_AUTH_TOKEN` — single-tenant bearer token
-- `PLOIDY_TOKENS` — multi-tenant JSON map `{"tok-a": "tenant-a"}`
-- `PLOIDY_API_KEY` — for `debate_auto` when using the OpenAI-compatible
-  fallback
-- `PLOIDY_DASH_TOKEN` — dashboard bearer token
+```bash
+helm install ploidy deploy/helm/ploidy \
+  --set-string env.PLOIDY_AUTH_MODE=oauth \
+  --set-string env.PLOIDY_OAUTH_ISSUER=https://ploidy.example.com
+```
 
-## Plain kubectl
+The issuer must be the exact public HTTPS origin. Configure ingress and
+TLS separately for your cluster.
 
-```sh
+Useful chart switches:
+
+- `persistence.size`: PVC capacity
+- `serviceMonitor.enabled`: Prometheus Operator integration
+- `networkPolicy.enabled`: restrict ingress
+- `existingSecret`: externally managed static/API/dashboard secrets
+- `env.PLOIDY_*`: explicit service configuration
+
+## Plain Kubernetes
+
+The single-file manifest contains an example Secret. Replace its blank
+credentials and choose `bearer`, `oauth`, or `both` before exposing the
+Service through ingress:
+
+```bash
 kubectl apply -f deploy/kubernetes/ploidy.yaml
 ```
 
-The single-file manifest is deliberately minimal (no ServiceMonitor / NetworkPolicy).
-Edit the embedded Secret before applying if you want auth enabled.
+Blank bearer credentials mean unauthenticated local operation; they are
+not a production configuration.
 
-## Scaling note
+## Scaling and metrics
 
-Both layouts fix `replicas: 1` and use the `Recreate` strategy. The state
-backend is a local SQLite file mounted on a PVC, so two pods would corrupt
-each other's writes. The Redis-backed backend that unblocks horizontal scale
-is tracked as a separate follow-up.
+Do not increase replicas beyond one while using the SQLite PVC. Redis
+can coordinate process locks, but it does not replace the state store.
+
+`/metrics` is intentionally an infrastructure endpoint. Restrict it with
+a NetworkPolicy, ingress rule, or private monitoring path.

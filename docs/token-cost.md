@@ -1,140 +1,110 @@
-# Token cost and how to keep it down
+# Token cost and guardrails
 
-Ploidy calls the API multiple times per debate, so it is naturally
-more expensive than a single chat turn. The good news is every knob
-that drives that cost is exposed. This page walks through each one
-and tells you which default to keep, which to tune, and which to
-ignore unless you are doing research.
+Auto mode performs model inference for every position and challenge, so
+it costs more than a single chat completion. Ploidy exposes limits that
+bound this cost without changing the same-model intervention.
 
-## Cost baseline (what you'd spend if every call was a single Q&A)
+## What one auto debate calls
 
-Each `debate(mode='auto')` run fires these LLM calls:
+For `deep_n=1` and `fresh_n=1`, auto mode generates:
 
-1. Deep position generation
-2. Fresh position generation
-3. Challenge from Deep → Fresh
-4. Challenge from Fresh → Deep
-5. (optional) LLM-backed convergence meta-analysis when
-   `PLOIDY_LLM_CONVERGENCE=1`
+1. one Deep position with non-empty `context_documents`;
+2. one Fresh position without those documents;
+3. one Deep-owned challenge;
+4. one Fresh-owned challenge; and
+5. optionally, one LLM convergence meta-analysis when
+   `PLOIDY_LLM_CONVERGENCE=1`.
 
-At effort=high the per-call output ceiling is 4096 tokens. Typical
-1×1 auto debate without context_documents burns roughly:
+Input cost depends primarily on the supplied Deep context and the
+backend's prompt-caching policy. Output cost depends on `effort`. Consult
+the configured provider's current pricing instead of relying on a fixed
+dollar estimate in this documentation.
 
-| | Input tokens | Output tokens |
-|---|---|---|
-| Per call | ~600 – 1,200 | ~2,000 – 4,000 |
-| Debate total (×4 calls) | ~3,000 – 5,000 | ~8,000 – 16,000 |
+## Keep the model fixed across sides
 
-Scale that against your model's pricing and you get the honest number.
-With Opus 4.6 it lands around **$0.70 – $1.50 per debate**. With Sonnet
-4.6, **$0.15 – $0.30**. Context_documents linearly grow the input
-column.
+Ploidy isolates context as the independent variable. `deep_model` and
+`fresh_model` exist for controlled cross-model experiments and backend
+routing diagnostics, but a valid Ploidy service debate sets both to the
+same model (or leaves both unset so they inherit the same backend
+default).
 
-## Knobs that save meaningful money
+Using a stronger Deep model and a cheaper Fresh model may reduce spend,
+but it confounds model and context. Such a run must be labelled a
+heterogeneous-model control, not evidence for Ploidy's context-asymmetry
+mechanism.
 
-### 1. Prompt caching (free when enabled)
+## Guardrails that preserve the intervention
 
-The two challenge calls quote the *same* pair of positions. v0.4.1
-onwards ships them as a byte-stable shared prefix, which every major
-provider now caches automatically.
+### Context ceiling
 
-For Anthropic (where caching gives the biggest discount) flip on
-**`PLOIDY_API_CACHE=1`** so Ploidy passes explicit
-`cache_control: {"type": "ephemeral"}` on the shared prefix. That
-tells the server to treat the positions block as a 5-minute cache
-segment — the second challenge hits cache at ~10% input-token cost.
+`PLOIDY_MAX_CONTEXT_TOKENS` rejects a run whose combined
+`context_documents` exceed the approximate ceiling. It is a spend
+guardrail, not silent truncation. Hosted examples set it to `20000`.
 
-- Works automatically when `PLOIDY_API_BASE_URL` points at
-  `*.anthropic.com`. Other providers see the same byte-stable prefix
-  and fall back to their automatic prefix cache (OpenAI, DeepSeek,
-  Together — all supported as of 2026-04).
-- Savings on a 1×1 run: roughly **30-40% of total input tokens**.
-- Zero risk — cached responses are not reused, only cached *prompt
-  prefix tokens* are discounted on the next call.
+`PLOIDY_MAX_CONTEXT_DOCS` separately limits document count.
 
-### 2. Model choice per side
+### Effort
 
-`debate(deep_model=..., fresh_model=...)` takes per-side overrides.
-In practice the deep side benefits most from top-tier reasoning; the
-fresh side and the challenges are perfectly served by a mid-tier
-model.
+`effort` controls the per-call output ceiling:
 
-- Example split: `deep_model="claude-opus-4-6"`,
-  `fresh_model="claude-sonnet-4-6"`.
-- Saves roughly **40-50% of combined spend** on a 1×1 auto debate
-  with very little observable quality drop.
+| effort | Maximum output tokens per call |
+|---|---:|
+| `low` | 1024 |
+| `medium` | 2048 |
+| `high` | 4096 |
+| `max` | 8192 |
 
-### 3. Effort level
+Lower effort reduces maximum output size for both sides equally and
+therefore preserves the same-model comparison.
 
-`effort` maps directly to the per-call output ceiling:
+### Ploidy level
 
-| effort | `max_tokens` |
-|---|---|
-| `"low"` | 1024 |
-| `"medium"` | 2048 |
-| `"high"` (default) | 4096 |
-| `"max"` | 8192 |
+`deep_n` and `fresh_n` are active seats inside one debate. Increasing
+them adds independently generated positions and challenges; it is not a
+free repetition counter. Keep `1n` for the smallest service call and use
+higher levels only when the decision justifies the additional inference.
 
-Output tokens are the expensive side of the bill. Dropping from
-`"high"` to `"medium"` roughly **halves output spend** and only
-affects how verbose each response is — the structure (positions,
-challenges, convergence categories) is unchanged.
+### Rate and retention limits
 
-### 4. Context budget cap
+`PLOIDY_RATE_CAPACITY` is the per-tenant burst allowance and
+`PLOIDY_RATE_PER_SEC` is the sustained rate. Hosted examples use `20`
+and `1` respectively.
 
-`PLOIDY_MAX_CONTEXT_TOKENS` rejects any run whose combined
-`context_documents` exceed the ceiling. It is a spend guardrail, not
-a soft trim — the caller gets a `ProtocolError` telling them what to
-shrink. The service defaults to no cap (research behaviour); production
-deployments should set something like `20000` so a stray huge-context
-debate cannot silently bill $50.
+These limits are not an admission system. In v0.4.0 OAuth mode,
+unrestricted DCR can mint new client IDs and reset per-client buckets.
+Use a gateway or controlled static bearer identities for abuse control.
 
-### 5. `mode="solo"` when the caller already has both sides
+`PLOIDY_RETENTION_DAYS` bounds stored completed/cancelled debate history;
+it does not change inference cost but prevents unbounded local storage.
 
-If you are orchestrating from Claude Code and can write both
-positions yourself (the `/ploidy` slash command does exactly this),
-Ploidy's API spend is **zero**. Every convergence decision is made
-by the rule-based engine over the submitted text. Turn on
-`PLOIDY_LLM_CONVERGENCE=1` only when the meta-analysis narrative is
-worth one extra call.
+## Prompt caching
 
-### 6. Rate limit per tenant
+`PLOIDY_API_CACHE=1` enables the explicit cache-control path for supported
+Anthropic-compatible endpoints. Other backends may apply their own
+prefix caching. Cache availability and discounts are provider contracts,
+so verify them against the configured endpoint before including savings
+in a budget.
 
-`PLOIDY_RATE_CAPACITY` / `PLOIDY_RATE_PER_SEC` are a hard cap on how
-many debates any single tenant can start in a burst / per second.
-Default off. Set something like capacity=10, rate=0.05 to make sure a
-misbehaving integration cannot run 500 parallel Opus debates on your
-card.
+## Solo mode
 
-## Knobs that do not save much (skip unless curious)
+`debate(mode="solo")` makes no position or challenge generation calls;
+the caller supplies those texts. Rule-based convergence also makes no
+model call. Enabling `PLOIDY_LLM_CONVERGENCE=1` adds the optional
+meta-analysis inference.
 
-- `context_pct` — percentage of `context_documents` to keep. Nice for
-  research sweeps on context-length sensitivity; in production you
-  want the real context or nothing, so you rarely set it.
-- `injection_mode` — where the context enters the prompt. Affects
-  behaviour, not cost.
-- `language` — prompts the model to answer in a specific language.
-  Purely behavioural.
+The caller must still create the Fresh position in an independent clean
+context. Reusing one anchored conversation is cheaper, but it is not the
+same intervention.
 
-## Research-only knobs (big quality impact, big cost impact)
+## Hosted baseline
 
-- `deep_n` / `fresh_n` — parallel positions per side. Each additional
-  position is one more LLM call at the position phase. Set to 2+
-  only when you need Stochastic-N isolation for experiments; for
-  production `1×1` is correct.
-- `effort="max"` — doubles output ceiling. Rarely worth the price
-  outside evaluation runs.
-
-## Recommended production defaults
-
-```sh
-PLOIDY_API_CACHE=1
+```bash
+PLOIDY_MAX_CONTEXT_DOCS=10
 PLOIDY_MAX_CONTEXT_TOKENS=20000
-PLOIDY_RATE_CAPACITY=10
-PLOIDY_RATE_PER_SEC=0.05
-# Keep effort default at "high" for quality; drop to "medium" if
-# tight-budget is the priority.
+PLOIDY_RATE_CAPACITY=20
+PLOIDY_RATE_PER_SEC=1
+PLOIDY_RETENTION_DAYS=30
 ```
 
-Combined effect vs the same workload with zero tuning: roughly
-**55-65% cheaper** on Opus, **40-50% cheaper** on Sonnet.
+Track actual input/output tokens and provider invoices for your workload;
+do not infer production cost from research-run counts.
