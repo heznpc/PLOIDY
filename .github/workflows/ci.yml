@@ -75,3 +75,50 @@ jobs:
 
       - name: Test
         run: pytest -v --cov=ploidy --cov-report=term-missing --cov-fail-under=60
+
+  package:
+    name: Wheel and docs smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.19"
+          python-version: "3.13"
+
+      - name: Verify lock and release mirrors
+        run: |
+          uv lock --check
+          python scripts/check_release_consistency.py
+
+      - name: Build documentation strictly
+        run: uv run --frozen --extra docs mkdocs build --strict
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Install wheel in a clean environment
+        run: |
+          WHEEL=$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -name '*.whl' -print -quit)
+          test -n "$WHEEL"
+          python -m venv /tmp/ploidy-wheel-smoke
+          /tmp/ploidy-wheel-smoke/bin/python -m pip install \
+            "${WHEEL}[api,dashboard,metrics,redis,cli]"
+          cd /tmp
+          EXPECTED_PLOIDY_VERSION="$(python -c \
+            'import os,tomllib; p=os.path.join(os.environ["GITHUB_WORKSPACE"],"pyproject.toml"); print(tomllib.load(open(p,"rb"))["project"]["version"])')"
+          export EXPECTED_PLOIDY_VERSION
+          /tmp/ploidy-wheel-smoke/bin/python \
+            "$GITHUB_WORKSPACE/scripts/smoke_installed_package.py"
+
+      - name: Authenticated startup smoke
+        run: |
+          cd /tmp
+          /tmp/ploidy-wheel-smoke/bin/python \
+            "$GITHUB_WORKSPACE/scripts/auth_startup_smoke.py"

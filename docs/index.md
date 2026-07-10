@@ -106,7 +106,7 @@ export PLOIDY_API_BASE_URL=https://api.anthropic.com
 
     Core concept and why context asymmetry matters.
 
-- [:material-file-tree: **Architecture**](architecture.md)
+- [:material-file-tree: **Architecture**](ARCHITECTURE.md)
 
     Technical architecture and module overview.
 

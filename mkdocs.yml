@@ -38,9 +38,11 @@ theme:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - v0.4 Migration: v0.4-migration.md
+  - Custom Connector: custom-connector.md
   - Debate Templates: templates.md
   - How It Works: how-it-works.md
-  - Architecture: architecture.md
+  - Architecture: ARCHITECTURE.md
   - Session Orchestration: session-orchestration.md
   - API Reference: api-reference.md
   - Research: research.md

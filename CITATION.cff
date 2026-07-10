@@ -3,17 +3,13 @@ title: "Ploidy: Context-Asymmetric Structured Debate for LLM Decision Verificati
 message: "If you use this software in academic work, please cite the Zenodo record."
 type: software
 authors:
-  - family-names: Yoon
-    given-names: Jiyeon
-    alias: heznpc
+  - name: Heznpc
+version: 0.4.0
 identifiers:
-  - type: doi
-    value: "10.5281/zenodo.XXXXXXX"
-    description: "Zenodo DOI for the tagged release"
   - type: url
-    value: "https://github.com/heznpc/ploidy-research"
+    value: "https://github.com/heznpc/PLOIDY"
     description: "Source repository"
-repository-code: "https://github.com/heznpc/ploidy-research"
+repository-code: "https://github.com/heznpc/PLOIDY"
 license: MIT
 keywords:
   - multi-agent debate
@@ -35,9 +31,8 @@ abstract: |
 preferred-citation:
   type: software
   authors:
-    - family-names: Yoon
-      given-names: Jiyeon
-      alias: heznpc
+    - name: Heznpc
   title: "Ploidy: Context-Asymmetric Structured Debate for LLM Decision Verification"
+  version: 0.4.0
   year: 2026
-  url: "https://github.com/heznpc/ploidy-research"
+  url: "https://github.com/heznpc/PLOIDY"

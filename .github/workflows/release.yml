@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/heznpc/ploidy
+  PYTHON_VERSION: "3.13"
+  UV_VERSION: "0.11.19"
+
+jobs:
+  release:
+    name: Verify, build, and publish one tagged SHA
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ploidy/
+
+    steps:
+      - name: Check out the tag commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Verify exact SHA, tag, version, and lock
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git tag --points-at "$GITHUB_SHA" | grep -Fx "$RELEASE_TAG"
+          python scripts/check_release_consistency.py --tag "$RELEASE_TAG"
+          uv lock --check
+          echo "PACKAGE_VERSION=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Install verification dependencies
+        run: uv sync --frozen --extra dev --extra docs
+
+      - name: Verify source
+        run: |
+          uv run --frozen --extra dev --extra docs ruff check .
+          uv run --frozen --extra dev --extra docs ruff format --check .
+          uv run --frozen --extra dev --extra docs \
+            pytest -v --cov=ploidy --cov-report=term-missing --cov-fail-under=60
+
+      - name: Build documentation once
+        run: uv run --frozen --extra docs mkdocs build --strict
+
+      - name: Build Python distributions once
+        run: uv build
+
+      - name: Smoke-test the built wheel outside the source tree
+        run: |
+          WHEEL=$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -name '*.whl' -print -quit)
+          test -n "$WHEEL"
+          python -m venv /tmp/ploidy-release-wheel
+          /tmp/ploidy-release-wheel/bin/python -m pip install \
+            "${WHEEL}[api,dashboard,metrics,redis,cli]"
+          cd /tmp
+          export EXPECTED_PLOIDY_VERSION="$PACKAGE_VERSION"
+          /tmp/ploidy-release-wheel/bin/python \
+            "$GITHUB_WORKSPACE/scripts/smoke_installed_package.py"
+          /tmp/ploidy-release-wheel/bin/python \
+            "$GITHUB_WORKSPACE/scripts/auth_startup_smoke.py"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the container once
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ploidy-release:${{ github.sha }}
+          build-args: |
+            PLOIDY_VERSION=${{ env.PACKAGE_VERSION }}
+            VCS_REF=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.PACKAGE_VERSION }}
+
+      - name: Smoke-test container metadata and package
+        run: |
+          test "$(docker image inspect "ploidy-release:$GITHUB_SHA" \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" \
+            = "$GITHUB_SHA"
+          docker run --rm --entrypoint python \
+            -e PACKAGE_VERSION \
+            "ploidy-release:$GITHUB_SHA" \
+            -c 'import os, ploidy; assert ploidy.__version__ == os.environ["PACKAGE_VERSION"]'
+
+      - name: Prepare immutable release assets
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=${RELEASE_TAG#v}
+          mkdir release-assets
+          cp dist/* release-assets/
+          tar -czf "release-assets/ploidy-docs-${VERSION}.tar.gz" -C site .
+          cd release-assets
+          sha256sum ./* > SHA256SUMS
+
+      - name: Publish exact Python distributions to PyPI with OIDC
+        run: >-
+          uv publish
+          --trusted-publishing always
+          --check-url https://pypi.org/simple
+          dist/*.whl dist/*.tar.gz
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the exact locally built container
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=${RELEASE_TAG#v}
+          docker tag "ploidy-release:$GITHUB_SHA" "$IMAGE_NAME:$VERSION"
+          docker tag "ploidy-release:$GITHUB_SHA" "$IMAGE_NAME:$GITHUB_SHA"
+          docker push "$IMAGE_NAME:$VERSION"
+          docker push "$IMAGE_NAME:$GITHUB_SHA"
+
+      - name: Publish the exact prebuilt documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          uv run --frozen --extra docs ghp-import \
+            --no-jekyll --push --force \
+            --message "docs: deploy $GITHUB_SHA" site
+
+      - name: Create or refresh the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --verify-tag \
+              --target "$GITHUB_SHA" \
+              --title "Ploidy $RELEASE_TAG" \
+              --generate-notes
+          fi

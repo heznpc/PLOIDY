@@ -1,22 +1,25 @@
 # fly.io app config for Ploidy.
 #
-# Rename `ploidy-demo` to something globally unique before `flyctl deploy`.
-# Secrets (PLOIDY_TOKENS etc.) go via `flyctl secrets set`, not this file.
+# Rename `ploidy-demo` before `flyctl deploy`. Static admission tokens and
+# API credentials go via `flyctl secrets set`, not this file.
 
 app = "ploidy-demo"
 primary_region = "nrt"  # Tokyo; pick the closest fly region to your users
 
 [build]
-  dockerfile = "../../Dockerfile"
+  image = "ghcr.io/heznpc/ploidy:0.4.0"
 
 [env]
   PLOIDY_TRANSPORT = "streamable-http"
   PLOIDY_PORT = "8765"
   PLOIDY_DB_PATH = "/data/ploidy.db"
   PLOIDY_LOG_LEVEL = "INFO"
-  # Retention off by default; flip to e.g. "30" once production traffic
-  # starts so the disk image doesn't grow unbounded.
-  # PLOIDY_RETENTION_DAYS = "30"
+  PLOIDY_AUTH_MODE = "bearer"
+  PLOIDY_MAX_CONTEXT_DOCS = "10"
+  PLOIDY_MAX_CONTEXT_TOKENS = "20000"
+  PLOIDY_RATE_CAPACITY = "20"
+  PLOIDY_RATE_PER_SEC = "1"
+  PLOIDY_RETENTION_DAYS = "30"
 
 [http_service]
   internal_port = 8765

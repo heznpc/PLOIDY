@@ -80,7 +80,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: ploidy
-          image: ghcr.io/heznpc/ploidy:latest
+          image: ghcr.io/heznpc/ploidy:0.4.0
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -99,6 +99,18 @@ spec:
               value: "/data/ploidy.db"
             - name: PLOIDY_LOG_LEVEL
               value: "INFO"
+            - name: PLOIDY_AUTH_MODE
+              value: "bearer"
+            - name: PLOIDY_MAX_CONTEXT_DOCS
+              value: "10"
+            - name: PLOIDY_MAX_CONTEXT_TOKENS
+              value: "20000"
+            - name: PLOIDY_RATE_CAPACITY
+              value: "20"
+            - name: PLOIDY_RATE_PER_SEC
+              value: "1"
+            - name: PLOIDY_RETENTION_DAYS
+              value: "30"
             - name: PLOIDY_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:

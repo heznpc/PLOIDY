@@ -1,13 +1,22 @@
 services:
   ploidy:
-    build: .
+    image: ghcr.io/heznpc/ploidy:0.4.0
+    build:
+      context: .
+      args:
+        PLOIDY_VERSION: 0.4.0
     ports:
-      - "8765:8765"
+      - "127.0.0.1:8765:8765"
     volumes:
       - ploidy-data:/data
     environment:
       PLOIDY_LOG_LEVEL: INFO
       PLOIDY_TRANSPORT: streamable-http
+      PLOIDY_MAX_CONTEXT_DOCS: "10"
+      PLOIDY_MAX_CONTEXT_TOKENS: "20000"
+      PLOIDY_RATE_CAPACITY: "20"
+      PLOIDY_RATE_PER_SEC: "1"
+      PLOIDY_RETENTION_DAYS: "30"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8765/healthz', timeout=3).status == 200 else 1)"]
       interval: 30s

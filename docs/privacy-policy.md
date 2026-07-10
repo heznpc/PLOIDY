@@ -27,7 +27,7 @@ software's data flows, not any particular operator's practices.
 
 - **Controller**: the maintainer listed in `pyproject.toml`
   (`heznpc`).
-- **Contact**: see [`SECURITY.md`](../SECURITY.md) for security
+- **Contact**: see [`SECURITY.md`](https://github.com/heznpc/PLOIDY/blob/main/SECURITY.md) for security
   incidents; general privacy enquiries via the repository's GitHub
   Issues with the `privacy` label, or the email listed in the
   maintainer's Zenodo record.
@@ -39,8 +39,8 @@ software's data flows, not any particular operator's practices.
 ## 2. Data we collect and store
 
 Persisted locally in a SQLite database (path `PLOIDY_DB_PATH`,
-default `~/.ploidy/ploidy.db`, created with `0o700` owner-only
-permissions):
+default `~/.ploidy/ploidy.db`; its parent directory is created with
+`0700`, and the database plus `-wal` / `-shm` files are kept at `0600`):
 
 | Category | Field(s) | Source | Purpose | Legal basis (GDPR) |
 |---|---|---|---|---|
@@ -151,7 +151,8 @@ for these rights. Upstream deployments respond within 30 days
   `hmac.compare_digest` for constant-time comparison.
 - OAuth 2.0 mode (`PLOIDY_AUTH_MODE=oauth`) enforces PKCE S256,
   single-use authorisation codes, and refresh-token rotation.
-- Database file is created with `0o700` (owner-only) permissions.
+- The database directory is created with `0700`; the database and its
+  SQLite `-wal` / `-shm` sidecars are kept at `0600`.
 - Per-tenant rate limiting is available (`PLOIDY_RATE_CAPACITY`,
   `PLOIDY_RATE_PER_SEC`).
 - Access tokens are opaque random 256-bit secrets stored in the
@@ -159,7 +160,7 @@ for these rights. Upstream deployments respond within 30 days
   — revocation is the defence.
 
 No software is perfectly secure. Report vulnerabilities privately
-via [`SECURITY.md`](../SECURITY.md).
+via [`SECURITY.md`](https://github.com/heznpc/PLOIDY/blob/main/SECURITY.md).
 
 ## 9. Children
 

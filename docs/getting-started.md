@@ -1,170 +1,183 @@
-# Getting Started
+# Getting started
 
-This guide walks you through installing Ploidy and running your first cross-session debate.
+Ploidy requires Python 3.11 or newer and an MCP-compatible client.
 
-## Prerequisites
-
-- **Python 3.11 or later**
-- **Two terminal windows** with an MCP-compatible AI client (Claude Code, Claude Desktop, etc.)
-
-## Installation
+## Install
 
 ```bash
-pip install ploidy
+pip install ploidy==0.4.0
 ```
 
-Or install from source:
+For server-generated auto debates, install the API extra:
 
 ```bash
-git clone https://github.com/heznpc/ploidy.git
-cd ploidy
-pip install -e .
+pip install "ploidy[api]==0.4.0"
 ```
 
-## Step 1: Start the Server
+## Local MCP client: stdio
 
-```bash
-python -m ploidy
-```
+`stdio` is the default transport. Add this server entry to your MCP
+client; the client will start and stop Ploidy itself.
 
-The server starts on `http://localhost:8765/mcp` using Streamable HTTP transport. Leave this running.
-
-**Environment variables** (all optional):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PLOIDY_PORT` | `8765` | Server port |
-| `PLOIDY_DB_PATH` | `~/.ploidy/ploidy.db` | SQLite database path |
-| `PLOIDY_LOG_LEVEL` | `INFO` | Logging level |
-| `PLOIDY_AUTH_TOKEN` | *(none)* | Bearer token for auth (if set, all requests require it) |
-| `PLOIDY_MAX_SESSIONS` | `5` | Max sessions per debate |
-
-## Step 2: Configure MCP Clients
-
-Both terminals need to connect to the same Ploidy server. Add to your MCP config:
-
-=== "Claude Code (.mcp.json)"
-
-    ```json
-    {
-      "mcpServers": {
-        "ploidy": {
-          "type": "streamable-http",
-          "url": "http://localhost:8765/mcp"
-        }
-      }
+```json
+{
+  "mcpServers": {
+    "ploidy": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "ploidy"]
     }
-    ```
-
-=== "Claude Desktop"
-
-    Add to `claude_desktop_config.json`:
-
-    ```json
-    {
-      "mcpServers": {
-        "ploidy": {
-          "type": "streamable-http",
-          "url": "http://localhost:8765/mcp"
-        }
-      }
-    }
-    ```
-
-## Step 3: Run Your First Debate
-
-### Terminal 1 — The Deep Session
-
-Open your MCP client in a terminal where you have project context. Tell the AI:
-
-> "Start a Ploidy debate: Should we use monorepo or polyrepo for our microservices?"
-
-The AI calls `debate_start` and gets back a `debate_id` like `a1b2c3d4e5f6`.
-
-### Terminal 2 — The Fresh Session
-
-Open a **new, clean** MCP client session. Tell the AI:
-
-> "Join Ploidy debate a1b2c3d4e5f6"
-
-The Fresh session receives **only the debate prompt** — no project context.
-
-### The Debate Unfolds
-
-Both sessions then go through the protocol:
-
-```
-INDEPENDENT → POSITION → CHALLENGE → CONVERGENCE → COMPLETE
+  }
+}
 ```
 
-1. **Position** — Each AI independently analyzes the question and submits a stance
-2. **Challenge** — Each AI reads the other's position and responds with a semantic action:
-    - `agree` — "I reached the same conclusion"
-    - `challenge` — "I disagree, here's why"
-    - `propose_alternative` — "Neither is right, consider this"
-    - `synthesize` — "Both have merit, here's a synthesis"
-3. **Converge** — Either session triggers convergence analysis
+No HTTP server is started in this mode.
 
-### Review the Result
+## First debate without an API key
 
-The convergence result includes:
+Ask the MCP client to create two analyses independently:
 
-- **Agreements** — Points where both sessions independently converged
-- **Productive disagreements** — Fresh session's lack of context revealed a valid concern
-- **Irreducible disagreements** — Different priorities requiring a human decision
-- **Confidence score** — 0.0 (full disagreement) to 1.0 (full agreement)
+1. A Deep analysis that can inspect the project.
+2. A Fresh analysis from a new subagent that sees only the decision
+   prompt.
 
-## Available Tools
+Then call the unified tool:
 
-| Tool | Description |
-|------|-------------|
-| `debate_start` | Begin a debate with a prompt |
-| `debate_join` | Join as a fresh session |
-| `debate_position` | Submit your stance |
-| `debate_challenge` | Critique the other's position |
-| `debate_converge` | Trigger convergence analysis |
-| `debate_status` | Check current state and messages |
-| `debate_cancel` | Cancel an in-progress debate |
-| `debate_delete` | Permanently delete a debate |
-| `debate_history` | List past debates |
-| `debate_auto` | Run both sides automatically via API |
-| `debate_review` | Review and resume a paused auto-debate (HITL) |
+```python
+await debate(
+    prompt="Should this repository split the ingestion service?",
+    mode="solo",
+    deep_position="…analysis grounded in this repository…",
+    fresh_position="…independent analysis that saw only the prompt…",
+    deep_challenge="…optional critique of the Fresh position…",
+    fresh_challenge="…optional critique of the Deep position…",
+)
+```
 
-## Optional: Single-Terminal Auto Debate
+Ploidy persists the transcript and returns `rendered_markdown` plus the
+structured convergence result. The server does not make the two caller-
+supplied positions independent; the caller must create the Fresh side in
+a genuinely separate context.
 
-If you want Ploidy to generate both sides itself, configure an OpenAI-compatible backend:
+## Auto debate
+
+Auto mode uses an OpenAI-compatible backend:
 
 ```bash
 export PLOIDY_API_BASE_URL=https://api.openai.com/v1
-export PLOIDY_API_KEY=your-key
-export PLOIDY_API_MODEL=gpt-5.4
+export PLOIDY_API_KEY=...
+export PLOIDY_API_MODEL=your-model
 ```
 
-Then ask your MCP client to call `debate_auto`.
+Every auto debate requires non-empty `context_documents`. This is the
+Deep-only evidence that creates the intervention; an auto call without it
+is rejected rather than silently running two symmetric prompts.
 
-- `fresh_role="fresh"` requires `delivery_mode="none"`
-- `fresh_role="semi_fresh"` requires `delivery_mode="passive"` or `delivery_mode="active"`
-- the server will generate both positions, both challenges, and the convergence result
+```python
+await debate(
+    prompt="Should this repository split the ingestion service?",
+    mode="auto",
+    context_documents=[
+        "Service topology…",
+        "Recent incident and dependency constraints…",
+    ],
+    context_sources=["topology", "incident-review"],
+    fresh_role="fresh",
+    delivery_mode="none",
+    deep_n=2,
+    fresh_n=2,
+)
+```
 
-## Docker
+For a Fresh side, `delivery_mode` must be `none`. A Semi-Fresh side uses
+`passive`, `active`, or `selective` delivery.
+
+## Shared HTTP server
+
+Two independent MCP clients need one shared Streamable HTTP server:
 
 ```bash
-docker compose up
+PLOIDY_TRANSPORT=streamable-http python3 -m ploidy
+export PLOIDY_URL=http://127.0.0.1:8765
 ```
 
-Or build and run directly:
+`PLOIDY_URL` is the base URL understood by Ploidy's HTTP client commands.
+Use `${PLOIDY_URL}/mcp` as the MCP URL after substituting its value:
+
+```json
+{
+  "mcpServers": {
+    "ploidy": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:8765/mcp"
+    }
+  }
+}
+```
+
+The legacy phase tools support the original two-client flow:
+
+1. Deep calls `debate_start` with the prompt and Deep-only
+   `context_documents`.
+2. Fresh calls `debate_join` with the returned `debate_id`.
+3. Every seat submits `debate_position`; no position is disclosed until
+   the position barrier is complete.
+4. Every seat submits its own `debate_challenge`.
+5. One client calls `debate_converge`.
+
+## Authentication
+
+Loopback development may run without authentication. Do not expose that
+configuration publicly.
+
+Static bearer tokens for self-hosting:
 
 ```bash
-docker build -t ploidy .
-docker run -p 8765:8765 -v ploidy-data:/data ploidy
+export PLOIDY_AUTH_MODE=bearer
+export PLOIDY_TOKENS='{"replace-with-random-token":"tenant-a"}'
 ```
 
-## Example Debate Prompts
+OAuth protocol interoperability in a controlled environment:
 
-Architecture decisions work best because they have clear trade-offs:
+```bash
+export PLOIDY_AUTH_MODE=oauth
+export PLOIDY_OAUTH_ISSUER=https://ploidy.example.com
+```
 
-- "Should we use monorepo or polyrepo for 12 microservices with a shared auth library?"
-- "REST vs gRPC for internal service communication?"
-- "SQLite vs PostgreSQL for a tool that starts local but may scale to multi-user?"
-- "Should we migrate from Express to Fastify?"
-- "Serverless functions vs containerized services for our event processing pipeline?"
+The issuer must be the exact public HTTPS origin, without `/mcp`.
+In 0.4.0, DCR clients are auto-approved without resource-owner login or
+consent, so OAuth is not public admission control. Use an external
+gateway/private ingress or static bearer tokens where admission matters.
+`PLOIDY_AUTH_MODE=both` is reserved for a transition that must accept
+both protocol OAuth and an existing `PLOIDY_TOKENS` map.
+
+## Hosted-service safety limits
+
+The repository's container and deployment examples enable bounded
+defaults. When running from the Python package directly, set them
+explicitly:
+
+| Variable | Hosted example | Purpose |
+|---|---:|---|
+| `PLOIDY_MAX_CONTEXT_TOKENS` | `20000` | Approximate combined Deep-context ceiling |
+| `PLOIDY_MAX_CONTEXT_DOCS` | `10` | Maximum document count |
+| `PLOIDY_RATE_CAPACITY` | `20` | Per-tenant burst allowance |
+| `PLOIDY_RATE_PER_SEC` | `1` | Per-tenant sustained request rate |
+| `PLOIDY_RETENTION_DAYS` | `30` | Purge old completed/cancelled debates |
+
+## Container
+
+```bash
+docker compose up --build
+```
+
+The Compose service binds only to `127.0.0.1` by default. For a public
+deployment, terminate TLS and configure a private gateway or controlled
+bearer authentication before changing that binding.
+
+## Next steps
+
+- [API reference](api-reference.md)
+- [v0.4 migration](v0.4-migration.md)
+- [Custom Connector](custom-connector.md)
+- [Deployment recipes](https://github.com/heznpc/PLOIDY/blob/main/deploy/README.md)

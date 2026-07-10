@@ -1,7 +1,17 @@
-# Claude.ai Connectors Directory — submission checklist
+# Claude.ai Connectors Directory — HOLD
+
+!!! danger "Not directory-ready in v0.4.0"
+
+    OAuth discovery, DCR, PKCE, token issuance, and tenant scoping boot
+    successfully, but authorization auto-approves every client. There is
+    no resource-owner login, consent, or operator admission decision.
+    New DCR clients can also evade per-client rate buckets. Do not submit
+    v0.4.0 to a public connector directory. Add real owner authentication
+    and consent, or place a reviewer-approved admission gateway in front,
+    then repeat the security review.
 
 Tracking doc for the directory submission path described in
-[planning/oauth-integration.md](../planning/oauth-integration.md).
+[planning/oauth-integration.md](https://github.com/heznpc/PLOIDY/blob/main/planning/oauth-integration.md).
 The four preceding OAuth slices shipped the code and tests; this
 file captures the artefacts Anthropic's reviewers need alongside
 the running server.
@@ -13,15 +23,15 @@ Source of truth for the submission process:
 
 | Item | Status | Location / note |
 |---|---|---|
-| Public HTTPS endpoint | ⏳ pending deploy | Fly.io recipe in [`deploy/fly/README.md`](../deploy/fly/README.md) — target URL TBD |
-| OAuth 2.0 Authorization Server | ✅ shipped | `PLOIDY_AUTH_MODE=oauth`; discovery at `/.well-known/oauth-authorization-server` |
+| Public HTTPS endpoint | ⏳ pending deploy | Fly.io recipe in [`deploy/fly/README.md`](https://github.com/heznpc/PLOIDY/blob/main/deploy/fly/README.md) — target URL TBD |
+| OAuth 2.0 protocol flow | ⚠️ protocol-only | Boots and issues tokens, but auto-approval means it is not user authentication or admission control |
 | PKCE S256 | ✅ shipped | Advertised in discovery; enforced by the SDK + provider |
-| Dynamic Client Registration | ✅ shipped | `/register` route |
+| Dynamic Client Registration | ⚠️ unrestricted | `/register` auto-admits clients; sybil/rate-limit bypass remains open |
 | Redirect URI allowlist (claude.ai / claude.com) | ✅ shipped | Each registered client may list either origin; the SDK validates on `/authorize` |
 | Privacy policy (global baseline) | ✅ drafted | [`privacy-policy.md`](privacy-policy.md) — GDPR / CCPA / PIPA / LGPD structure; **legal review required before publishing** |
 | Terms of service (global baseline) | ✅ drafted | [`terms-of-service.md`](terms-of-service.md) — governing law + consumer protections + indemnification; **legal review required before publishing** |
-| Security reporting channel | ✅ [`SECURITY.md`](../SECURITY.md) | GitHub Security Advisories + email fallback |
-| Citation metadata | ✅ [`CITATION.cff`](../CITATION.cff) + `.zenodo.json` | Zenodo DOI placeholder pending release |
+| Security reporting channel | ✅ [`SECURITY.md`](https://github.com/heznpc/PLOIDY/blob/main/SECURITY.md) | GitHub Security Advisories |
+| Citation metadata | ✅ [`CITATION.cff`](https://github.com/heznpc/PLOIDY/blob/main/CITATION.cff) | Release metadata |
 | Korean translation (PIPA) | ⏳ pending | Target: `docs/ko/privacy-policy.md` + `docs/ko/terms-of-service.md` before active Korean marketing |
 | Logo (SVG + PNG) | ⏳ pending | Place in `docs/assets/logo.{svg,png}` |
 | Favicon | ⏳ pending | `docs/assets/favicon.ico` |
@@ -71,29 +81,17 @@ decision-stage slash commands (`/spike`, `/review-pr`,
 
 ### Review account
 
-Create a dedicated OAuth client with label `anthropic-review` and
-share the credentials via Anthropic's reviewer-support channel.
-Procedure once the server is deployed:
-
-```sh
-curl -X POST https://<deploy-url>/register \
-  -H 'content-type: application/json' \
-  -d '{
-        "client_name": "Anthropic Review",
-        "redirect_uris": [
-          "https://claude.ai/api/mcp/auth_callback",
-          "https://claude.com/api/mcp/auth_callback"
-        ]
-      }'
-```
-
-Response contains the `client_id`; include it in the submission
-form. Rotate on approval.
+Blocked. Unrestricted DCR is not a review-account provisioning flow.
+Create an operator-approved identity and revocation path before issuing
+reviewer credentials.
 
 ## Pre-submission self-check
 
 Before opening the submission form, run:
 
+- [ ] Resource-owner login and consent or equivalent operator admission
+      control exists; DCR alone does not satisfy this gate.
+- [ ] Rate limits cannot be reset by minting a new DCR client ID.
 - [ ] `curl https://<deploy-url>/.well-known/oauth-authorization-server` returns a 200 with all four endpoint URLs.
 - [ ] `curl https://<deploy-url>/.well-known/oauth-protected-resource` returns a 200 with the issuer listed.
 - [ ] `pytest tests/test_oauth_endpoints.py -q` passes against the deployed build.
@@ -113,3 +111,5 @@ Before opening the submission form, run:
 3. **Abuse response playbook**: documented runbook for revoking
    a tenant that sends prohibited content is a reviewer checklist
    item.
+4. **Admission architecture**: decide whether owner login/consent lives
+   in Ploidy or an external gateway before resuming submission work.

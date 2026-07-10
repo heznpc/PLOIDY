@@ -1,421 +1,298 @@
-# API Reference
+# API reference
 
-Ploidy exposes MCP tools for debate orchestration over the Streamable HTTP transport at `http://localhost:8765/mcp`.
+Ploidy 0.4.0 exposes 13 MCP tools. The default transport is `stdio`.
+When `PLOIDY_TRANSPORT=streamable-http`, the MCP endpoint is
+`${PLOIDY_URL}/mcp` and the live SSE endpoint is
+`${PLOIDY_URL}/v1/debate/stream`.
 
-## Tools Overview
+## Tool inventory
 
-| Tool | Purpose | Read-only | Destructive | Idempotent |
-|------|---------|:---------:|:-----------:|:----------:|
-| `debate_start` | Create a new debate | No | Yes | No |
-| `debate_join` | Join an existing debate | No | No | No |
-| `debate_position` | Submit a position statement | No | No | No |
-| `debate_challenge` | Submit a challenge to another position | No | No | No |
-| `debate_converge` | Trigger convergence analysis | No | No | No |
-| `debate_status` | Get current debate state | Yes | No | Yes |
-| `debate_cancel` | Cancel an in-progress debate | No | Yes | Yes |
-| `debate_delete` | Delete a debate permanently | No | Yes | Yes |
-| `debate_history` | List past debates | Yes | No | Yes |
-| `debate_auto` | Run a full debate automatically | No | Yes | No |
-| `debate_review` | Review and resume a paused auto-debate (HITL) | No | No | No |
+| Tool | Status | Writes state | Purpose |
+|---|---|:---:|---|
+| `debate` | Primary | Yes | Unified `auto` or `solo` debate |
+| `debate_start` | Legacy | Yes | Create a debate and Deep session |
+| `debate_join` | Legacy | Yes | Join as Fresh or Semi-Fresh |
+| `debate_position` | Legacy | Yes | Submit one independent position |
+| `debate_challenge` | Legacy | Yes | Submit one semantic challenge |
+| `debate_converge` | Legacy | Yes | Run convergence analysis |
+| `debate_cancel` | Legacy | Yes | Cancel an active debate |
+| `debate_delete` | Legacy | Yes | Permanently delete a debate |
+| `debate_status` | Legacy | No | Read one debate's state |
+| `debate_history` | Legacy | No | List the caller's debates |
+| `debate_solo` | Legacy | Yes | Caller-supplied one-call debate |
+| `debate_auto` | Legacy | Yes | API-generated one-call debate |
+| `debate_review` | Legacy | Yes | Resume a paused auto debate |
 
----
+The legacy tools remain callable in 0.4.0. Their MCP descriptions are
+marked deprecated so new integrations prefer `debate`; they are still
+needed for explicit phase control and two-client isolation.
 
-## debate_start
+## `debate`
 
-Begin a new debate session with a decision prompt. Creates a debate record and the initial Experienced session.
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `prompt` | `string` | Yes | The decision question to debate. |
-| `context_documents` | `list[string]` | No | Optional documents to provide to the Deep session. These are stored for the record but NOT shown to the Fresh session. |
-
-### Returns
-
-```json
-{
-  "debate_id": "a1b2c3d4e5f6",
-  "session_id": "a1b2c3d4e5f6-exp8f2a",
-  "role": "experienced",
-  "phase": "independent",
-  "prompt": "Should we use monorepo or polyrepo?"
-}
+```python
+await debate(prompt, mode="auto" | "solo", ...)
 ```
 
-### Annotations
+### Shared parameters
 
-- `destructiveHint: true` -- Creates a new debate record
-- `readOnlyHint: false`
-- `idempotentHint: false` -- Each call creates a new debate
+| Parameter | Type | Default | Meaning |
+|---|---|---|---|
+| `prompt` | `string` | required | Decision question |
+| `mode` | `string` | `"auto"` | `"auto"` or `"solo"` |
+| `context_documents` | `list[string]` | see below | Deep-only evidence |
+| `context_sources` | `list[string]` | generated labels | Provenance label per document |
+| `blocked_sources` | `list[string]` | `[]` | Reject matching source labels or document text |
 
-### Example
+If `context_sources` is supplied, its length must match
+`context_documents`. The result includes a context manifest containing
+source labels, SHA-256 hashes, character counts, and approximate token
+counts; raw documents are not copied into that manifest.
 
-```
-User: Use debate_start to debate "Should we migrate our REST API to GraphQL?"
+### Auto mode
 
-Tool call: debate_start(
-  prompt="Should we migrate our REST API to GraphQL?",
-  context_documents=["We have 47 REST endpoints serving 3 mobile clients and 1 web app."]
+Auto mode requires the `api` extra, an OpenAI-compatible backend, and at
+least one non-empty `context_documents` entry. Calls without Deep-only
+context are rejected because they do not create context asymmetry.
+
+| Parameter | Type | Default | Constraints |
+|---|---|---|---|
+| `fresh_role` | `string` | `"fresh"` | `fresh` or `semi_fresh` |
+| `delivery_mode` | `string` | `"none"` | Fresh: `none`; Semi-Fresh: `passive`, `active`, or `selective` |
+| `pause_at` | `string \| null` | `null` | `challenge` or `convergence` |
+| `deep_n` | `integer` | `1` | Deep seats, at least 1 |
+| `fresh_n` | `integer` | `1` | Fresh seats, at least 1 |
+| `effort` | `string` | `"high"` | `low`, `medium`, `high`, or `max` |
+| `injection_mode` | `string` | `"raw"` | Context prompt formatting mode |
+| `context_pct` | `integer` | `100` | Retained context percentage, 0–100 |
+| `language` | `string` | `"en"` | Supported output language code |
+| `deep_model` | `string \| null` | backend default | Deep-side override; keep equal to Fresh for service debates |
+| `fresh_model` | `string \| null` | backend default | Fresh-side override; keep equal to Deep for service debates |
+
+`deep_n` and `fresh_n` are seats inside one debate, not repeated runs.
+Each seat produces its own position, and each challenge is generated by
+the seat that owns it rather than copied across same-side seats.
+Using different Deep and Fresh models confounds model with context and is
+only a heterogeneous-model control, not the core Ploidy intervention.
+
+```python
+await debate(
+    prompt="Adopt a monorepo?",
+    mode="auto",
+    context_documents=["Team topology and dependency graph…"],
+    context_sources=["architecture-review"],
+    blocked_sources=["untrusted-transcript"],
+    deep_n=2,
+    fresh_n=2,
 )
 ```
 
----
-
-## debate_join
-
-Join an existing debate as a `fresh` or `semi_fresh` session.
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `debate_id` | `string` | Yes | Debate identifier returned by `debate_start`. |
-| `role` | `string` | No | `fresh` or `semi_fresh`. Default: `fresh`. |
-| `delivery_mode` | `string` | No | `none`, `passive`, or `active`. Default: `none`. |
-
-### Returns
-
-```json
-{
-  "debate_id": "a1b2c3d4e5f6",
-  "session_id": "a1b2c3d4e5f6-fresh-123abc",
-  "role": "fresh",
-  "delivery_mode": "none",
-  "phase": "independent",
-  "prompt": "Should we use monorepo or polyrepo?"
-}
-```
-
----
-
-## debate_position
-
-Submit a position from a session. Records a session's stance on the debate prompt during the POSITION phase.
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `session_id` | `string` | Yes | The session submitting the position. |
-| `content` | `string` | Yes | The position statement. Should be specific and actionable. |
-
-### Returns
-
-```json
-{
-  "session_id": "debate-a1b2c3d4-exp8f2a",
-  "phase": "position",
-  "status": "recorded",
-  "content_length": 342
-}
-```
-
-### Annotations
-
-- `destructiveHint: false`
-- `readOnlyHint: false`
-- `idempotentHint: false` -- Each submission is recorded as a new message
-
-### Example
-
-```
-Tool call: debate_position(
-  session_id="debate-a1b2c3d4-exp8f2a",
-  content="We should keep REST. Our 47 endpoints are well-documented, our mobile team
-           knows the patterns, and the migration cost outweighs the benefits for our
-           current team size of 4 engineers."
-)
-```
-
----
-
-## debate_challenge
-
-Submit a challenge to another session's position. Records a session's critique during the CHALLENGE phase.
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `session_id` | `string` | Yes | The session submitting the challenge. |
-| `content` | `string` | Yes | The challenge or critique text. |
-| `action` | `string` | No | Semantic action classifying this message's intent. Default: `"challenge"`. |
-
-### Semantic Actions
-
-| Action | Meaning |
-|--------|---------|
-| `agree` | "I reached the same conclusion independently." |
-| `challenge` | "I disagree with this position, here's why." |
-| `propose_alternative` | "Neither position is right -- consider this third option." |
-| `synthesize` | "Both positions have merit -- here's a synthesis." |
-
-### Returns
-
-```json
-{
-  "session_id": "debate-a1b2c3d4-fre3b7c",
-  "phase": "challenge",
-  "action": "challenge",
-  "status": "recorded",
-  "content_length": 289
-}
-```
-
-### Annotations
-
-- `destructiveHint: false`
-- `readOnlyHint: false`
-- `idempotentHint: false`
-
-### Example
-
-```
-Tool call: debate_challenge(
-  session_id="debate-a1b2c3d4-fre3b7c",
-  content="The 'well-documented' claim assumes documentation stays current.
-           GraphQL's self-documenting schema eliminates this maintenance burden.
-           Also, 3 mobile clients making different data requests is exactly the
-           over-fetching problem GraphQL solves.",
-  action="challenge"
-)
-```
-
----
-
-## debate_converge
-
-Trigger convergence analysis for a debate. Runs the convergence engine on the debate transcript and produces a structured synthesis of agreements and disagreements.
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `debate_id` | `string` | Yes | The debate to analyze. |
-
-### Returns
-
-```json
-{
-  "debate_id": "debate-a1b2c3d4",
-  "synthesis": "Keep REST for existing endpoints. Introduce GraphQL as a new
-                gateway layer for mobile clients, allowing gradual migration
-                without disrupting the current API.",
-  "confidence": 0.72,
-  "points": [
-    {
-      "category": "agreement",
-      "summary": "Migration cost is non-trivial",
-      "session_a_view": "47 endpoints is too many to migrate at once",
-      "session_b_view": "Full migration would be costly regardless of endpoint count",
-      "resolution": "Both agree migration should be incremental if done at all"
-    },
-    {
-      "category": "productive_disagreement",
-      "summary": "Documentation maintenance burden",
-      "session_a_view": "REST endpoints are well-documented",
-      "session_b_view": "Documentation requires ongoing maintenance; schemas are self-documenting",
-      "resolution": "Valid concern -- GraphQL schema as documentation source of truth"
-    }
-  ]
-}
-```
-
-### Annotations
-
-- `destructiveHint: false`
-- `readOnlyHint: false`
-- `idempotentHint: false`
-- `openWorldHint: false` -- Analysis is based only on the debate transcript
-
-### Example
-
-```
-Tool call: debate_converge(
-  debate_id="debate-a1b2c3d4"
-)
-```
-
----
-
-## debate_status
-
-Get current state of a debate. Returns phase, session info, and message counts.
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `debate_id` | `string` | Yes | The debate to inspect. |
-
-### Returns
-
-```json
-{
-  "debate_id": "debate-a1b2c3d4",
-  "phase": "challenge",
-  "message_count": 4,
-  "sessions": [
-    {
-      "session_id": "debate-a1b2c3d4-exp8f2a",
-      "role": "experienced"
-    },
-    {
-      "session_id": "debate-a1b2c3d4-fre3b7c",
-      "role": "fresh"
-    }
-  ],
-  "messages": {
-    "position": [],
-    "challenge": []
-  }
-}
-```
-
-### Annotations
-
-- `readOnlyHint: true` -- Does not modify debate state
-- `destructiveHint: false`
-- `idempotentHint: true` -- Same input always returns current state
-
----
-
-## debate_history
-
-Retrieve past debates and their outcomes. Lists recent debates with their status and convergence results.
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `limit` | `integer` | No | Maximum number of debates to return. Default: `50`. |
-
-### Returns
-
-```json
-{
-  "debates": [
-    {
-      "id": "a1b2c3d4e5f6",
-      "prompt": "Should we use monorepo or polyrepo?",
-      "status": "complete",
-      "created_at": "2026-03-19 08:00:00",
-      "updated_at": "2026-03-19 08:01:10"
-    }
-  ],
-  "total": 1,
-  "limit": 50
-}
-```
-
----
-
-## debate_auto
-
-Run a complete debate automatically using an OpenAI-compatible API backend.
-
-The server generates:
-
-- an Experienced position using `context_documents`
-- a Fresh or Semi-Fresh position
-- challenge messages from both sides
-- convergence analysis
-
-### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `prompt` | `string` | Yes | The decision prompt. |
-| `context_documents` | `list[string]` | No | Context for the Experienced side. |
-| `fresh_role` | `string` | No | `fresh` or `semi_fresh`. Default: `fresh`. |
-| `delivery_mode` | `string` | No | `none`, `passive`, or `active`. Default: `none`. |
-
-### Constraints
-
-- `fresh_role="fresh"` requires `delivery_mode="none"`
-- `fresh_role="semi_fresh"` requires `delivery_mode="passive"` or `delivery_mode="active"`
-- requires `PLOIDY_API_BASE_URL` and compatible credentials
-
-### Returns
+### Solo mode
+
+Solo mode never calls an external model API.
+
+| Parameter | Type | Default | Meaning |
+|---|---|---|---|
+| `deep_position` | `string` | required | Non-empty Deep stance |
+| `fresh_position` | `string` | required | Non-empty independently generated Fresh stance |
+| `deep_challenge` | `string \| null` | `null` | Optional Deep critique |
+| `fresh_challenge` | `string \| null` | `null` | Optional Fresh critique |
+| `deep_label` | `string` | `"Deep"` | Display label |
+| `fresh_label` | `string` | `"Fresh"` | Display label |
+
+The caller is responsible for generating the Fresh position in a clean
+context. Supplying two texts from one already-anchored conversation does
+not provide session isolation.
+
+## Common completed result
+
+Completed one-call debates return structured fields and answer-first
+Markdown. Fields can grow compatibly; integrations should ignore unknown
+keys.
 
 ```json
 {
   "debate_id": "a1b2c3d4e5f6",
   "phase": "complete",
   "mode": "auto",
-  "fresh_role": "fresh",
-  "delivery_mode": "none",
-  "synthesis": "Use a monorepo for the shared auth layer but isolate deployment boundaries.",
-  "confidence": 0.5,
-  "meta_analysis": null,
+  "synthesis": "…",
+  "confidence": 0.72,
   "points": [
     {
       "category": "productive_disagreement",
-      "summary": "Deployment coupling risk",
-      "resolution": null
-    }
-  ]
-}
-```
-
-```json
-{
-  "debates": [
-    {
-      "id": "debate-a1b2c3d4",
-      "prompt": "Should we migrate our REST API to GraphQL?",
-      "status": "complete",
-      "created_at": "2026-03-15T14:30:00",
-      "updated_at": "2026-03-15T14:35:22"
+      "summary": "…",
+      "resolution": "…",
+      "root_cause": "…"
     }
   ],
-  "total": 1,
-  "limit": 50
+  "context_manifest": {
+    "entries": [
+      {
+        "index": 0,
+        "source": "architecture-review",
+        "sha256": "…",
+        "chars": 2048,
+        "approx_tokens": 512
+      }
+    ]
+  },
+  "rendered_markdown": "## Ploidy debate result…"
 }
 ```
 
-### Annotations
+With `pause_at`, the result is a paused state. Resume it with
+`debate_review`.
 
-- `readOnlyHint: true`
-- `destructiveHint: false`
-- `idempotentHint: true`
+## Phase-control tools
 
----
+### `debate_start`
 
-## Data Types
+```python
+await debate_start(
+    prompt: str,
+    context_documents: list[str] | None = None,
+    context_sources: list[str] | None = None,
+    blocked_sources: list[str] | None = None,
+)
+```
 
-### DebatePhase
+Creates the debate and Deep session. Provide Deep-only context here for
+a context-asymmetric two-client debate.
 
-The debate protocol progresses through five phases:
+### `debate_join`
 
-| Phase | Description |
-|-------|-------------|
-| `independent` | Sessions analyze the prompt independently |
-| `position` | Sessions declare their stances |
-| `challenge` | Sessions critique each other's positions |
-| `convergence` | Convergence engine synthesizes the debate |
-| `complete` | Debate concluded, result available |
+```python
+await debate_join(
+    debate_id: str,
+    role: str = "fresh",
+    delivery_mode: str = "none",
+)
+```
 
-### SemanticAction
+Fresh requires `none`; Semi-Fresh uses a configured delivery mode.
 
-Actions that classify the intent of a challenge message:
+### `debate_position`
 
-| Action | Description |
-|--------|-------------|
-| `agree` | Independent agreement with the other position |
-| `challenge` | Disagreement with specific reasoning |
-| `propose_alternative` | Neither position is adequate; a third option is proposed |
-| `synthesize` | Both positions have merit; a synthesis is offered |
+```python
+await debate_position(session_id: str, content: str)
+```
 
-### ConvergencePoint
+Positions remain undisclosed until every required seat has submitted.
+The response reports whether the position barrier is complete.
 
-A single point in the convergence analysis:
+### `debate_challenge`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `category` | `string` | One of `agreement`, `productive_disagreement`, `irreducible` |
-| `summary` | `string` | Brief description of the point |
-| `session_a_view` | `string` | The Deep session's perspective |
-| `session_b_view` | `string` | The Fresh session's perspective |
-| `resolution` | `string \| null` | Synthesized resolution, if any |
+```python
+await debate_challenge(
+    session_id: str,
+    content: str,
+    action: str = "challenge",
+)
+```
+
+`action` is `agree`, `challenge`, `propose_alternative`, or
+`synthesize`.
+
+### `debate_converge`
+
+```python
+await debate_converge(debate_id: str)
+```
+
+Runs convergence after the required challenge messages have arrived.
+
+## Lifecycle and inspection tools
+
+```python
+await debate_status(debate_id: str)
+await debate_history(limit: int = 50)  # clamped to 1..200
+await debate_cancel(debate_id: str)
+await debate_delete(debate_id: str)
+```
+
+History and ownership are tenant-scoped when authentication is enabled.
+`debate_delete` permanently removes the debate and associated data.
+
+## Legacy one-call and HITL tools
+
+```python
+await debate_solo(
+    prompt: str,
+    deep_position: str,
+    fresh_position: str,
+    deep_challenge: str | None = None,
+    fresh_challenge: str | None = None,
+    context_documents: list[str] | None = None,
+    context_sources: list[str] | None = None,
+    blocked_sources: list[str] | None = None,
+    deep_label: str = "Deep",
+    fresh_label: str = "Fresh",
+)
+
+await debate_auto(
+    prompt: str,
+    context_documents: list[str],
+    context_sources: list[str] | None = None,
+    blocked_sources: list[str] | None = None,
+    fresh_role: str = "fresh",
+    delivery_mode: str = "none",
+    pause_at: str | None = None,
+    deep_n: int = 1,
+    fresh_n: int = 1,
+    effort: str = "high",
+    injection_mode: str = "raw",
+    context_pct: int = 100,
+    language: str = "en",
+    deep_model: str | None = None,
+    fresh_model: str | None = None,
+)
+
+await debate_review(
+    debate_id: str,
+    action: str = "approve",
+    override_content: str | None = None,
+)
+```
+
+Review actions are `approve`, `override`, and `reject`.
+
+## HTTP/SSE endpoint
+
+`POST ${PLOIDY_URL}/v1/debate/stream` runs the same auto path and emits
+`text/event-stream` progress. It also requires non-empty
+`context_documents`.
+
+```http
+POST /v1/debate/stream HTTP/1.1
+Authorization: Bearer <tenant-token>
+Content-Type: application/json
+Accept: text/event-stream
+
+{
+  "prompt": "Adopt a monorepo?",
+  "context_documents": ["Team topology and dependency graph…"],
+  "context_sources": ["architecture-review"],
+  "deep_n": 2,
+  "fresh_n": 2
+}
+```
+
+Bearer deployments return `401` for missing or invalid credentials.
+OAuth access tokens resolve their `client_id` to the tenant owner. In
+0.4.0, DCR and authorization are auto-approved without owner login or
+consent; this tenant mapping is isolation metadata, not public admission
+control.
+Cancellation of the HTTP client cancels the running debate and cleans up
+its active state.
+
+## Limits
+
+| Environment variable | Package default | Notes |
+|---|---:|---|
+| `PLOIDY_MAX_PROMPT_LEN` | `10000` | Characters |
+| `PLOIDY_MAX_CONTENT_LEN` | `50000` | Characters per content field |
+| `PLOIDY_MAX_CONTEXT_DOCS` | `10` | Document count |
+| `PLOIDY_MAX_CONTEXT_TOKENS` | `0` | `0` disables the approximate combined ceiling |
+| `PLOIDY_MAX_SESSIONS` | `5` | Total seats in one debate |
+
+Hosted deployment examples set stricter context, rate, and retention
+defaults than the package's research-compatible defaults.
