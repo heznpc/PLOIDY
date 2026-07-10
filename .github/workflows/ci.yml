@@ -103,6 +103,9 @@ jobs:
       - name: Build wheel and source distribution
         run: uv build
 
+      - name: Verify service-only distribution contents
+        run: python scripts/check_release_consistency.py --dist-dir dist
+
       - name: Install wheel in a clean environment
         run: |
           WHEEL=$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -name '*.whl' -print -quit)

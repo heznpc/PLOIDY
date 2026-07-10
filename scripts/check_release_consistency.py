@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import re
+import tarfile
 import tomllib
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,10 +71,60 @@ def check_mirrors(version: str) -> None:
         require_pattern(*check)
 
 
+def check_distribution_contents(dist_dir: Path, version: str) -> None:
+    """Ensure PyPI artifacts contain service surfaces and no research corpus."""
+    sdist = dist_dir / f"ploidy-{version}.tar.gz"
+    wheel = dist_dir / f"ploidy-{version}-py3-none-any.whl"
+    if not sdist.is_file() or not wheel.is_file():
+        raise SystemExit(f"expected one sdist and wheel for {version} in {dist_dir}")
+
+    allowed_sdist_roots = {
+        ".dockerignore",
+        ".gitignore",
+        "CITATION.cff",
+        "Dockerfile",
+        "LICENSE",
+        "PKG-INFO",
+        "README.md",
+        "SECURITY.md",
+        "deploy",
+        "docker-compose.yml",
+        "docs",
+        "mkdocs.yml",
+        "pyproject.toml",
+        "scripts",
+        "src",
+        "tests",
+        "uv.lock",
+    }
+    with tarfile.open(sdist, "r:gz") as archive:
+        unexpected = set()
+        for member in archive.getmembers():
+            parts = Path(member.name).parts
+            if len(parts) > 1 and parts[1] not in allowed_sdist_roots:
+                unexpected.add(parts[1])
+    if unexpected:
+        raise SystemExit(f"sdist contains non-service roots: {sorted(unexpected)}")
+
+    with zipfile.ZipFile(wheel) as archive:
+        unexpected = sorted(
+            name
+            for name in archive.namelist()
+            if not (name.startswith("ploidy/") or name.startswith(f"ploidy-{version}.dist-info/"))
+        )
+    if unexpected:
+        raise SystemExit(f"wheel contains unexpected paths: {unexpected}")
+
+
 def main() -> None:
     """Run package, mirror, and optional Git tag checks."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", help="Expected release tag, such as v0.4.0")
+    parser.add_argument(
+        "--dist-dir",
+        type=Path,
+        help="Also verify the built wheel and sdist at this path",
+    )
     args = parser.parse_args()
 
     version = package_version()
@@ -81,6 +133,8 @@ def main() -> None:
         tag_version = args.tag.removeprefix("v")
         if tag_version != version:
             raise SystemExit(f"release tag {args.tag!r} does not match package version {version!r}")
+    if args.dist_dir is not None:
+        check_distribution_contents(args.dist_dir, version)
     print(f"release surfaces agree on {version}")
 
 
